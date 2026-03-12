@@ -1,2 +1,27 @@
 jiratui
 dist/
+
+# Claude Code
+.claude/*
+!.claude/commands/
+
+# macOS
+.DS_Store
+
+# Build output
+/bin/
+/dist/
+
+# Debug
+debug
+
+# Logs
+*.log
+
+# Secrets
+*.pem
+*.key
+
+# Temp
+tmp/
+.tmp/
