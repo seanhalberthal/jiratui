@@ -38,12 +38,12 @@ func DefaultKeyMap() KeyMap {
 			key.WithHelp("G", "bottom"),
 		),
 		Open: key.NewBinding(
-			key.WithKeys("enter", "l"),
-			key.WithHelp("enter/l", "open"),
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "open"),
 		),
 		Back: key.NewBinding(
-			key.WithKeys("esc", "h"),
-			key.WithHelp("esc/h", "back"),
+			key.WithKeys("esc"),
+			key.WithHelp("esc", "back"),
 		),
 		OpenURL: key.NewBinding(
 			key.WithKeys("o"),

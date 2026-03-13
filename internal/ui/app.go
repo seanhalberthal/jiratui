@@ -97,9 +97,23 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, a.keys.Quit):
+		// ctrl+c always quits, regardless of input state.
+		if msg.String() == "ctrl+c" {
 			return a, tea.Quit
+		}
+
+		// When text input is active (search overlay or list filter),
+		// let the child view handle everything else.
+		if a.inputActive() {
+			break
+		}
+
+		// esc, q, and h/H all navigate back one level (or quit at the top).
+		if a.isBackKey(msg) {
+			return a.navigateBack()
+		}
+
+		switch {
 		case key.Matches(msg, a.keys.Search) && !a.search.Visible() && a.active != viewLoading:
 			a.search.Show()
 			a.previousView = a.active
@@ -115,26 +129,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, a.keys.Board) && a.active == viewBoard:
 			a.active = viewSprint
 			return a, nil
-		case a.active == viewBoard && (msg.String() == "H" || msg.String() == "esc"):
-			a.active = viewSprint
-			return a, nil
 		case msg.String() == "e" && a.active == viewBoard:
 			groups := a.board.ParentGroups()
 			current := a.board.ParentFilter()
 			next := cycleParentFilter(groups, current)
 			a.board.SetParentFilter(next)
-			return a, nil
-		case key.Matches(msg, a.keys.Back) && a.active == viewIssue:
-			if a.previousView == viewBoard {
-				a.active = viewBoard
-			} else {
-				a.active = viewSprint
-			}
-			return a, nil
-		case key.Matches(msg, a.keys.Back) && a.active == viewSprint:
-			if a.client.Config().BoardID == 0 {
-				a.active = viewHome
-			}
 			return a, nil
 		case key.Matches(msg, a.keys.Refresh) && a.active == viewSprint:
 			a.active = viewLoading
@@ -313,6 +312,54 @@ func (a App) View() string {
 	help := footerView(a.active, a.width, extra...)
 
 	return lipgloss.JoinVertical(lipgloss.Left, content, help)
+}
+
+// inputActive reports whether a text input is focused (search overlay or list filter).
+func (a App) inputActive() bool {
+	if a.active == viewSearch && a.search.InputActive() {
+		return true
+	}
+	if a.active == viewSprint && a.sprint.Filtering() {
+		return true
+	}
+	if a.active == viewHome && a.home.Filtering() {
+		return true
+	}
+	return false
+}
+
+// isBackKey returns true if the key should trigger back-navigation.
+func (a App) isBackKey(msg tea.KeyMsg) bool {
+	k := msg.String()
+	return k == "esc" || k == "q"
+}
+
+// navigateBack moves to the parent view, or quits if already at the top level.
+func (a App) navigateBack() (tea.Model, tea.Cmd) {
+	switch a.active {
+	case viewIssue:
+		if a.previousView == viewBoard {
+			a.active = viewBoard
+		} else {
+			a.active = viewSprint
+		}
+		return a, nil
+	case viewBoard:
+		a.active = viewSprint
+		return a, nil
+	case viewSprint:
+		if a.client.Config().BoardID == 0 {
+			a.active = viewHome
+			return a, nil
+		}
+		return a, tea.Quit
+	case viewSearch:
+		a.search.BackToInput()
+		return a, nil
+	case viewHome, viewLoading:
+		return a, tea.Quit
+	}
+	return a, nil
 }
 
 // Commands.

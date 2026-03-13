@@ -60,7 +60,7 @@ func New() Model {
 		compIndex:  -1,
 		submitKeys: key.NewBinding(key.WithKeys("enter")),
 		closeKeys:  key.NewBinding(key.WithKeys("esc")),
-		openKeys:   key.NewBinding(key.WithKeys("enter", "l")),
+		openKeys:   key.NewBinding(key.WithKeys("enter")),
 	}
 }
 
@@ -112,6 +112,26 @@ func (m *Model) SubmittedQuery() string {
 	q := m.pendingQuery
 	m.pendingQuery = ""
 	return q
+}
+
+// InputActive returns true when the search view has a text input focused
+// (JQL input or results list filtering).
+func (m Model) InputActive() bool {
+	if m.state == stateInput {
+		return true
+	}
+	if m.state == stateResults && m.results.FilterState() == list.Filtering {
+		return true
+	}
+	return false
+}
+
+// BackToInput returns from results to the JQL input.
+func (m *Model) BackToInput() {
+	if m.state == stateResults {
+		m.state = stateInput
+		m.input.Focus()
+	}
 }
 
 // Dismissed returns true (once) when the user closed search without entering a query.

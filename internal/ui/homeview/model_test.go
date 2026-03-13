@@ -55,15 +55,16 @@ func TestSelectedBoardSentinelReset(t *testing.T) {
 	}
 }
 
-func TestSelectedBoard_LKey(t *testing.T) {
+func TestSelectedBoard_LKey_DoesNotSelect(t *testing.T) {
 	m := New()
 	m.SetSize(80, 24)
 	m.SetBoards(testBoards())
 
+	// 'l' is no longer an open key — only enter opens.
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
 	b := m.SelectedBoard()
-	if b == nil {
-		t.Error("expected board selection via 'l' key")
+	if b != nil {
+		t.Error("expected no selection via 'l' key")
 	}
 }
 

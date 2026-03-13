@@ -208,7 +208,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.prevColumn()
 		case "l", "right", "tab":
 			m.nextColumn()
-		case "enter", "L":
+		case "enter":
 			if iss := m.columns[m.activeCol].selectedIssue(); iss != nil {
 				m.selected = iss
 			}

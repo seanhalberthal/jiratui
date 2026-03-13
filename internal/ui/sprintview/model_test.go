@@ -47,16 +47,16 @@ func TestSelectedIssueSentinelReset(t *testing.T) {
 	}
 }
 
-func TestSelectedIssue_LKey(t *testing.T) {
+func TestSelectedIssue_LKey_DoesNotSelect(t *testing.T) {
 	m := New()
 	m = m.SetSize(80, 24)
 	m = m.SetIssues(testIssues())
 
-	// 'l' key should also select.
+	// 'l' is no longer an open key — only enter opens.
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
 	_, ok := m.SelectedIssue()
-	if !ok {
-		t.Error("expected issue selection via 'l' key")
+	if ok {
+		t.Error("expected no selection via 'l' key")
 	}
 }
 

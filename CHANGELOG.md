@@ -32,6 +32,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Reworked keybindings: `esc` is the universal back key, `q` goes back one level (quits only at the top-level view), `enter` is the only open key, `h`/`l` reserved for left/right column navigation in board view
+- Removed `l` as an alias for open and `h` as an alias for back — simplifies key scheme and avoids conflicts in board view
+- Removed uppercase `H`/`L` keybinds from board view
+- Global keys (`q`, `?`, `H`, `b`, `r`) are now suppressed when text input is active (list filter or JQL search), preventing accidental quits or navigation while typing
 - `App.client` field changed from `*client.Client` to `client.JiraClient` interface
 - JQL search remapped from `/` to `?` — frees `/` for in-page list filtering (vim convention)
 - Board view columns now fit within terminal width and respect window resizing

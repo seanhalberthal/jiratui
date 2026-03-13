@@ -25,11 +25,12 @@ func New() Model {
 	l.Title = "Boards"
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
+	l.SetShowHelp(false)
 	l.Styles.Title = l.Styles.Title.Bold(true)
 
 	return Model{
 		list:     l,
-		openKeys: key.NewBinding(key.WithKeys("enter", "l")),
+		openKeys: key.NewBinding(key.WithKeys("enter")),
 	}
 }
 
@@ -72,6 +73,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	return m, cmd
+}
+
+// Filtering returns true when the list filter input is active.
+func (m Model) Filtering() bool {
+	return m.list.FilterState() == list.Filtering
 }
 
 func (m Model) View() string {
