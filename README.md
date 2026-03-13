@@ -51,8 +51,11 @@ The board ID is in the URL when viewing a board in Jira: `https://yourorg.atlass
 |---|---|
 | `j` / `↓` | Move down |
 | `k` / `↑` | Move up |
-| `Enter` / `l` | Open / select |
-| `Esc` / `h` | Back |
+| `h` / `l` | Move left / right (board columns) |
+| `Enter` | Open / select |
+| `Esc` | Back one level |
+| `q` | Back one level (quit at top-level view) |
+| `Ctrl+C` | Quit |
 | `o` | Open issue in browser |
 | `b` | Toggle board / list view |
 | `e` | Filter by parent (Epic, Feature, etc.) |
@@ -60,7 +63,6 @@ The board ID is in the URL when viewing a board in Jira: `https://yourorg.atlass
 | `?` | Search issues (JQL) with autocomplete |
 | `/` | Filter current list |
 | `H` | Go to home screen |
-| `q` | Quit |
 
 ## Usage
 

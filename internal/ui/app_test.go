@@ -515,8 +515,8 @@ func TestApp_BackKey_FromIssue_ToPreviousView(t *testing.T) {
 	model, _ = a.Update(IssueSelectedMsg{Issue: jira.Issue{Key: "PROJ-1"}})
 	a = model.(App)
 
-	// Press 'h' (back).
-	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	// Press esc (back).
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	a = model.(App)
 
 	if a.active != viewSprint {
@@ -532,7 +532,7 @@ func TestApp_BackKey_FromIssue_ToBoard(t *testing.T) {
 	app.active = viewIssue
 	app.previousView = viewBoard
 
-	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	a := model.(App)
 
 	if a.active != viewBoard {
@@ -546,7 +546,7 @@ func TestApp_BackKey_FromSprint_ToHome_WhenNoBoardID(t *testing.T) {
 	app := newTestApp(c, "")
 	app.active = viewSprint
 
-	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	a := model.(App)
 
 	if a.active != viewHome {
@@ -554,18 +554,91 @@ func TestApp_BackKey_FromSprint_ToHome_WhenNoBoardID(t *testing.T) {
 	}
 }
 
-func TestApp_BackKey_FromSprint_StaysWhenBoardIDSet(t *testing.T) {
+func TestApp_BackKey_FromSprint_QuitsWhenBoardIDSet(t *testing.T) {
 	c := defaultStub()
 	c.cfg.BoardID = 42
 	app := newTestApp(c, "")
 	app.active = viewSprint
 
-	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	// Sprint is the top-level view when boardID is set — back should quit.
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd (quit)")
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Errorf("expected tea.QuitMsg, got %T", msg)
+	}
+}
+
+func TestApp_QKey_FromIssue_GoesBack(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewIssue
+	app.previousView = viewSprint
+
+	// q from issue should go back, not quit.
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
 	a := model.(App)
 
-	// Should stay in sprint — no home to go back to when boardID is set.
 	if a.active != viewSprint {
-		t.Errorf("expected viewSprint (no home), got %d", a.active)
+		t.Errorf("expected viewSprint, got %d", a.active)
+	}
+}
+
+func TestApp_QKey_FromBoard_GoesBackToSprint(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewBoard
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	a := model.(App)
+
+	if a.active != viewSprint {
+		t.Errorf("expected viewSprint, got %d", a.active)
+	}
+}
+
+func TestApp_EscKey_FromHome_Quits(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewHome
+
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd (quit)")
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Errorf("expected tea.QuitMsg, got %T", msg)
+	}
+}
+
+func TestApp_QKey_FromSprint_NoBoardID_GoesHome(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSprint
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	a := model.(App)
+
+	if a.active != viewHome {
+		t.Errorf("expected viewHome, got %d", a.active)
+	}
+}
+
+func TestApp_CtrlC_AlwaysQuits(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewIssue
+
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd (quit)")
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Errorf("expected tea.QuitMsg, got %T", msg)
 	}
 }
 

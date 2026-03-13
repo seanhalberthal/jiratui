@@ -34,7 +34,7 @@ func New() Model {
 	return Model{
 		list: l,
 		openKeys: key.NewBinding(
-			key.WithKeys("enter", "l"),
+			key.WithKeys("enter"),
 		),
 	}
 }
@@ -89,6 +89,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	return m, cmd
+}
+
+// Filtering returns true when the list filter input is active.
+func (m Model) Filtering() bool {
+	return m.list.FilterState() == list.Filtering
 }
 
 // View renders the sprint view.

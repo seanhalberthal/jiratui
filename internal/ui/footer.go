@@ -20,8 +20,8 @@ func footerView(active view, width int, extra ...footerBinding) string {
 
 	// Common bindings present in most views.
 	nav := footerBinding{"j/k", "navigate"}
-	open := footerBinding{"enter/l", "open"}
-	back := footerBinding{"esc/h", "back"}
+	open := footerBinding{"enter", "open"}
+	back := footerBinding{"esc", "back"}
 	search := footerBinding{"?", "JQL"}
 	filter := footerBinding{"/", "filter"}
 	refresh := footerBinding{"r", "refresh"}
@@ -34,32 +34,30 @@ func footerView(active view, width int, extra ...footerBinding) string {
 		bindings = []footerBinding{
 			nav, open, back, filter,
 			{"b", "board view"},
-			search, refresh, quit,
+			search, refresh,
 		}
 	case viewBoard:
 		bindings = []footerBinding{
 			nav,
 			{"h/l", "columns"},
-			{"enter/L", "open"},
-			{"H/esc", "back"},
+			open, back,
 		}
 		bindings = append(bindings, extra...)
 		bindings = append(bindings,
 			footerBinding{"b", "list view"},
-			search, refresh, quit,
+			search, refresh,
 		)
 	case viewIssue:
 		bindings = []footerBinding{
 			nav, back,
 			{"o", "browser"},
-			search, quit,
+			search,
 		}
 	case viewSearch:
 		bindings = []footerBinding{
 			{"enter", "search"},
 			{"tab", "complete"},
 			{"esc", "close"},
-			quit,
 		}
 	case viewLoading:
 		bindings = []footerBinding{quit}
