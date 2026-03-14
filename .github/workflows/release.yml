@@ -159,12 +159,14 @@ jobs:
         id: tag
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ inputs.tag }}"
           elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ github.ref_name }}"
           else
-            echo "tag=${{ needs.version.outputs.new_tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ needs.version.outputs.new_tag }}"
           fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v4
         with:
@@ -194,4 +196,4 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           repository: seanhalberthal/homebrew-tap
           event-type: update-formula
-          client-payload: '{"formula": "jiratui", "version": "${{ steps.tag.outputs.tag }}"}'
+          client-payload: '{"formula": "jiratui", "version": "${{ steps.tag.outputs.version }}"}'

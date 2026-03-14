@@ -9,7 +9,7 @@
 [![Licence](https://img.shields.io/github/license/seanhalberthal/jiratui?style=flat)](LICENCE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux-blue?style=flat)]()
 
-[Install](#install) · [Configuration](#configuration) · [Usage](#usage) · [Keybindings](#keybindings) · [Development](#development)
+[Quick Start](#quick-start) · [Configuration](#configuration) · [Usage](#usage) · [Keybindings](#keybindings) · [Development](#development)
 
 </div>
 
@@ -27,18 +27,10 @@
 
 ---
 
-## Install
+## Quick Start
 
 ```sh
-go install github.com/seanhalberthal/jiratui@latest
-```
-
-Or build from source:
-
-```sh
-git clone https://github.com/seanhalberthal/jiratui.git
-cd jiratui
-make install
+brew install seanhalberthal/tap/jiratui
 ```
 
 ---
