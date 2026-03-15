@@ -1,8 +1,10 @@
 package client
 
 import (
+	"encoding/json"
 	"testing"
 
+	jiracli "github.com/ankitpokhrel/jira-cli/pkg/jira"
 	"github.com/seanhalberthal/jiru/internal/jira"
 )
 
@@ -57,5 +59,163 @@ func TestEnrichWithParents_EmptySlice(t *testing.T) {
 	result := EnrichWithParents(nil, nil)
 	if result != nil {
 		t.Errorf("expected nil result for nil input, got %v", result)
+	}
+}
+
+// --- convertIssue tests ---
+
+// issueFromJSON is a test helper that creates a jiracli.Issue from JSON.
+func issueFromJSON(t *testing.T, raw string) *jiracli.Issue {
+	t.Helper()
+	var iss jiracli.Issue
+	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+		t.Fatalf("failed to unmarshal test issue: %v", err)
+	}
+	return &iss
+}
+
+func TestConvertIssue_BasicFields(t *testing.T) {
+	iss := issueFromJSON(t, `{
+		"key": "TEST-1",
+		"fields": {
+			"summary": "Test summary",
+			"description": "A plain string description",
+			"status": {"name": "In Progress"},
+			"priority": {"name": "High"},
+			"assignee": {"displayName": "alice"},
+			"reporter": {"displayName": "bob"},
+			"issueType": {"name": "Story"},
+			"labels": ["backend", "urgent"]
+		}
+	}`)
+	result := convertIssue(iss)
+	if result.Key != "TEST-1" {
+		t.Errorf("Key = %q, want %q", result.Key, "TEST-1")
+	}
+	if result.Summary != "Test summary" {
+		t.Errorf("Summary = %q, want %q", result.Summary, "Test summary")
+	}
+	if result.Status != "In Progress" {
+		t.Errorf("Status = %q, want %q", result.Status, "In Progress")
+	}
+	if result.Description != "A plain string description" {
+		t.Errorf("Description = %q, want %q", result.Description, "A plain string description")
+	}
+	if result.Priority != "High" {
+		t.Errorf("Priority = %q, want %q", result.Priority, "High")
+	}
+	if result.Assignee != "alice" {
+		t.Errorf("Assignee = %q, want %q", result.Assignee, "alice")
+	}
+	if result.Reporter != "bob" {
+		t.Errorf("Reporter = %q, want %q", result.Reporter, "bob")
+	}
+	if result.IssueType != "Story" {
+		t.Errorf("IssueType = %q, want %q", result.IssueType, "Story")
+	}
+	if len(result.Labels) != 2 {
+		t.Errorf("Labels len = %d, want 2", len(result.Labels))
+	}
+}
+
+func TestConvertIssue_NilParent(t *testing.T) {
+	iss := issueFromJSON(t, `{
+		"key": "TEST-2",
+		"fields": {"summary": "No parent"}
+	}`)
+	result := convertIssue(iss)
+	if result.ParentKey != "" {
+		t.Errorf("expected empty ParentKey for nil parent, got %q", result.ParentKey)
+	}
+}
+
+func TestConvertIssue_WithParent(t *testing.T) {
+	iss := issueFromJSON(t, `{
+		"key": "TEST-4",
+		"fields": {
+			"summary": "Has parent",
+			"parent": {"key": "EPIC-1"}
+		}
+	}`)
+	result := convertIssue(iss)
+	if result.ParentKey != "EPIC-1" {
+		t.Errorf("ParentKey = %q, want %q", result.ParentKey, "EPIC-1")
+	}
+}
+
+func TestConvertIssue_NonStringDescription(t *testing.T) {
+	// V3 API returns an ADF object for description — should be treated as empty string.
+	iss := issueFromJSON(t, `{
+		"key": "TEST-3",
+		"fields": {
+			"summary": "ADF desc",
+			"description": {"type": "doc", "content": []}
+		}
+	}`)
+	result := convertIssue(iss)
+	if result.Description != "" {
+		t.Errorf("expected empty description for non-string, got %q", result.Description)
+	}
+}
+
+func TestConvertIssue_Comments(t *testing.T) {
+	iss := issueFromJSON(t, `{
+		"key": "TEST-5",
+		"fields": {
+			"summary": "With comments",
+			"comment": {
+				"comments": [
+					{"author": {"displayName": "alice"}, "body": "looks good"},
+					{"author": {"displayName": "bob"}, "body": {"type": "doc"}}
+				],
+				"total": 2
+			}
+		}
+	}`)
+	result := convertIssue(iss)
+	if len(result.Comments) != 2 {
+		t.Fatalf("expected 2 comments, got %d", len(result.Comments))
+	}
+	if result.Comments[0].Author != "alice" {
+		t.Errorf("Comment[0].Author = %q, want %q", result.Comments[0].Author, "alice")
+	}
+	if result.Comments[0].Body != "looks good" {
+		t.Errorf("Comment[0].Body = %q, want %q", result.Comments[0].Body, "looks good")
+	}
+	if result.Comments[1].Body != "" {
+		t.Errorf("Comment[1].Body = %q, want empty (non-string body)", result.Comments[1].Body)
+	}
+}
+
+func TestConvertIssue_EmptyFields(t *testing.T) {
+	iss := issueFromJSON(t, `{"key": "TEST-6", "fields": {}}`)
+	result := convertIssue(iss)
+	if result.Key != "TEST-6" {
+		t.Errorf("Key = %q, want %q", result.Key, "TEST-6")
+	}
+	if result.Summary != "" {
+		t.Errorf("Summary = %q, want empty", result.Summary)
+	}
+}
+
+// --- jqlEscape tests ---
+
+func TestJqlEscape(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"Done", "Done"},
+		{"O'Brien", `O\'Brien`},
+		{"It's a test", `It\'s a test`},
+		{"no'quotes'here", `no\'quotes\'here`},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := jqlEscape(tt.input)
+			if got != tt.want {
+				t.Errorf("jqlEscape(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }

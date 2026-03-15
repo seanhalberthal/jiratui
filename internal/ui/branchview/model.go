@@ -14,6 +14,7 @@ import (
 
 	"github.com/seanhalberthal/jiru/internal/jira"
 	"github.com/seanhalberthal/jiru/internal/theme"
+	"github.com/seanhalberthal/jiru/internal/validate"
 )
 
 // BranchRequest holds the details for creating a git branch.
@@ -40,6 +41,8 @@ type Model struct {
 
 	width  int
 	height int
+
+	errMsg string // Validation error message.
 
 	submitted *BranchRequest // Sentinel: branch to create.
 	dismissed bool           // Sentinel: user cancelled.
@@ -177,9 +180,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	}
 
 	if key.Matches(keyMsg, m.submitKeys) && !m.showSugg {
+		name := m.branchName.Value()
+		base := m.baseBranch.Value()
+
+		if err := validate.BranchName(name); err != nil {
+			m.errMsg = err.Error()
+			return m, nil
+		}
+		if err := validate.BranchName(base); err != nil {
+			m.errMsg = "base branch: " + err.Error()
+			return m, nil
+		}
+
+		m.errMsg = ""
 		m.submitted = &BranchRequest{
-			Name:     m.branchName.Value(),
-			Base:     m.baseBranch.Value(),
+			Name:     name,
+			Base:     base,
 			RepoPath: m.repoPath,
 			Mode:     m.branchMode,
 		}
@@ -272,6 +288,10 @@ func (m Model) View() string {
 			rows = append(rows, theme.StyleSubtle.Render(fmt.Sprintf("  … %d more", len(m.suggestions)-maxShow)))
 		}
 		sections = append(sections, strings.Join(rows, "\n"))
+	}
+
+	if m.errMsg != "" {
+		sections = append(sections, theme.StyleError.Render(m.errMsg))
 	}
 
 	sections = append(sections, "")

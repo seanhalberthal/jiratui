@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -116,6 +117,12 @@ var steps = [totalSteps]stepMeta{
 			if _, err := os.Stat(gitDir); err != nil {
 				return fmt.Errorf("not a git repository (no .git directory): %s", s)
 			}
+			// Canonicalise to prevent path traversal issues.
+			resolved, err := filepath.EvalSymlinks(s)
+			if err != nil {
+				return fmt.Errorf("cannot resolve path: %w", err)
+			}
+			_ = resolved // Canonicalisation applied at input storage time.
 			return nil
 		},
 	},
@@ -180,6 +187,9 @@ type Model struct {
 
 	// Branch mode toggle state.
 	branchModeCursor int // 0 = local, 1 = remote, 2 = both
+
+	// Auth rate limiting.
+	lastAuthAttempt time.Time
 
 	// Board picker state.
 	boards             []jira.Board // Available boards for selection.
@@ -464,9 +474,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					value = cleanDomain(value)
 					m.inputs[m.step].SetValue(value)
 				}
-				// Expand ~ in repo path.
-				if m.step == stepRepoPath {
+				// Expand ~ and canonicalise repo path.
+				if m.step == stepRepoPath && value != "" {
 					value = expandTilde(value)
+					if resolved, err := filepath.EvalSymlinks(value); err == nil {
+						value = filepath.Clean(resolved)
+					}
 					m.inputs[m.step].SetValue(value)
 				}
 				// Required check.
@@ -487,6 +500,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 				// Trigger async API validation at checkpoint steps.
 				if cmd := m.apiValidation(); cmd != nil {
+					if time.Since(m.lastAuthAttempt) < 2*time.Second {
+						m.errMsg = "Please wait before retrying"
+						return m, nil
+					}
+					m.lastAuthAttempt = time.Now()
 					m.validating = true
 					return m, tea.Batch(m.valSpinner.Tick, cmd)
 				}

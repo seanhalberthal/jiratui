@@ -8,9 +8,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Issue creation wizard (`c`) — multi-step form: project → issue type → summary → priority → assignee → labels → parent → description → confirm
-- Live user search with account ID resolution for assignee field
-- Project type detection (classic vs next-gen) for correct parent field handling
+- Status transitions (`m` from issue/board view) — pick from available transitions to move issues between statuses
+- Add comment (`c` from issue view) — multi-line editor with `ctrl+s` to submit
+
+### Fixed
+
+- Actions (comments, transitions) could fire twice if a background message arrived before the server responded
+- API token was unnecessarily exposed in the process environment
+- Branch names are now validated against git naming rules before creation
+- Clipboard-copied git commands are now properly shell-quoted
+
+### Security
+
+- JQL queries are escaped to prevent injection via status names or other user-controlled values
+- Error messages no longer display internal URLs or API endpoints
+- Git branch creation uses `--` separator to prevent argument injection
+
+## [0.1.2] — 2026-03-15
+
+### Added
+
+- Issue creation wizard (`c` from home/sprint/board) — multi-step form with project/type pickers, priority, assignee search, labels, parent issue, and description
 - Version display in footer bar
 
 ## [0.1.1] — 2026-03-15

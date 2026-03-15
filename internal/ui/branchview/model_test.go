@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -361,5 +362,481 @@ func TestListBranches_DeduplicatesRemote(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("expected 'main' once (deduplicated), got %d times in %v", count, branches)
+	}
+}
+
+func TestSetSize(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	m.SetSize(100, 40)
+
+	if m.width != 100 {
+		t.Errorf("expected width 100, got %d", m.width)
+	}
+	if m.height != 40 {
+		t.Errorf("expected height 40, got %d", m.height)
+	}
+	if m.branchName.Width != 80 {
+		t.Errorf("expected branchName width 80 (100-20), got %d", m.branchName.Width)
+	}
+	if m.baseBranch.Width != 80 {
+		t.Errorf("expected baseBranch width 80 (100-20), got %d", m.baseBranch.Width)
+	}
+}
+
+func TestView_RendersBranchName(t *testing.T) {
+	m := New(testIssue(), "/tmp/repo", false, "local")
+	m.SetSize(80, 24)
+
+	view := m.View()
+	if !strings.Contains(view, "proj-123-fix-login-bug") {
+		t.Error("expected View() to contain the branch name")
+	}
+	if !strings.Contains(view, "Create Branch") {
+		t.Error("expected View() to contain title 'Create Branch'")
+	}
+	if !strings.Contains(view, "Branch name") {
+		t.Error("expected View() to contain 'Branch name' label")
+	}
+	if !strings.Contains(view, "Base branch") {
+		t.Error("expected View() to contain 'Base branch' label")
+	}
+}
+
+func TestView_ClipboardMode(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	m.SetSize(80, 24)
+
+	view := m.View()
+	if !strings.Contains(view, "clipboard") {
+		t.Error("expected View() to contain 'clipboard' when repoPath is empty")
+	}
+	if !strings.Contains(view, "copy") {
+		t.Error("expected View() to contain 'copy' hint when repoPath is empty")
+	}
+}
+
+func TestView_RepoModes(t *testing.T) {
+	tests := []struct {
+		mode string
+		want string
+	}{
+		{"local", "creates branch locally"},
+		{"remote", "pushes branch to origin"},
+		{"both", "pushes to origin"},
+	}
+	for _, tt := range tests {
+		m := New(testIssue(), "/tmp/repo", false, tt.mode)
+		m.SetSize(120, 40)
+		view := m.View()
+		if !strings.Contains(view, tt.want) {
+			t.Errorf("mode %q: expected View() to contain %q", tt.mode, tt.want)
+		}
+	}
+}
+
+func TestView_ShowsSuggestions(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	m.branches = []string{"main", "develop", "feature/login"}
+	m.activeInput = 1
+	m.baseBranch.SetValue("dev")
+	m.updateSuggestions()
+	m.SetSize(80, 24)
+
+	view := m.View()
+	if !strings.Contains(view, "develop") {
+		t.Error("expected View() to contain suggestion 'develop'")
+	}
+}
+
+func TestView_ShowsErrorMessage(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	m.errMsg = "branch name must not start with '-'"
+	m.SetSize(80, 24)
+
+	view := m.View()
+	if !strings.Contains(view, "branch name must not start with '-'") {
+		t.Error("expected View() to contain the error message")
+	}
+}
+
+func TestUpdate_TabSwitchesInput(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	if m.activeInput != 0 {
+		t.Fatal("expected activeInput to start at 0")
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.activeInput != 1 {
+		t.Errorf("expected activeInput 1 after tab, got %d", m.activeInput)
+	}
+}
+
+func TestUpdate_TabBack(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	// Move to base branch field first.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.activeInput != 1 {
+		t.Fatal("expected activeInput 1 after tab")
+	}
+
+	// shift+tab should go back to branch name.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if m.activeInput != 0 {
+		t.Errorf("expected activeInput 0 after shift+tab, got %d", m.activeInput)
+	}
+}
+
+func TestUpdate_SuggestionNavigation(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	m.branches = []string{"develop", "feature/login", "feature/signup"}
+	m.activeInput = 1
+	m.baseBranch.SetValue("e")
+	m.updateSuggestions()
+
+	if !m.showSugg {
+		t.Fatal("expected suggestions to be shown")
+	}
+	if m.suggIdx != 0 {
+		t.Fatalf("expected suggIdx 0, got %d", m.suggIdx)
+	}
+
+	// Navigate down.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if m.suggIdx != 1 {
+		t.Errorf("expected suggIdx 1 after down, got %d", m.suggIdx)
+	}
+
+	// Navigate down again.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if m.suggIdx != 2 {
+		t.Errorf("expected suggIdx 2 after second down, got %d", m.suggIdx)
+	}
+
+	// Should not go past the end.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if m.suggIdx != 2 {
+		t.Errorf("expected suggIdx to stay at 2, got %d", m.suggIdx)
+	}
+
+	// Navigate up.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if m.suggIdx != 1 {
+		t.Errorf("expected suggIdx 1 after up, got %d", m.suggIdx)
+	}
+
+	// Navigate up to 0.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if m.suggIdx != 0 {
+		t.Errorf("expected suggIdx 0, got %d", m.suggIdx)
+	}
+
+	// Should not go below 0.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if m.suggIdx != 0 {
+		t.Errorf("expected suggIdx to stay at 0, got %d", m.suggIdx)
+	}
+}
+
+func TestUpdate_SuggestionAccept(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	m.branches = []string{"develop", "feature/login", "feature/signup"}
+	m.activeInput = 1
+	m.baseBranch.SetValue("feat")
+	m.updateSuggestions()
+
+	if !m.showSugg {
+		t.Fatal("expected suggestions to be shown")
+	}
+
+	// Accept the first suggestion (feature/login) with enter.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.baseBranch.Value() != "feature/login" {
+		t.Errorf("expected baseBranch to be set to suggestion, got %q", m.baseBranch.Value())
+	}
+	if m.showSugg {
+		t.Error("expected suggestions to be closed after accepting")
+	}
+}
+
+func TestUpdate_EscClosesSuggestions(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	m.branches = []string{"develop", "feature/login"}
+	m.activeInput = 1
+	m.baseBranch.SetValue("dev")
+	m.updateSuggestions()
+
+	if !m.showSugg {
+		t.Fatal("expected suggestions to be visible")
+	}
+
+	// Esc should close suggestions, not dismiss the view.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.showSugg {
+		t.Error("expected suggestions to be closed")
+	}
+	if m.dismissed {
+		t.Error("expected view not to be dismissed")
+	}
+}
+
+func TestUpdate_EscDismisses(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	// No suggestions visible.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if !m.dismissed {
+		t.Error("expected view to be dismissed when esc pressed with no suggestions")
+	}
+}
+
+func TestUpdate_ValidationError(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	// Set an invalid branch name (starts with '-').
+	m.branchName.SetValue("-invalid-name")
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.errMsg == "" {
+		t.Error("expected validation error for branch name starting with '-'")
+	}
+	if !strings.Contains(m.errMsg, "start with '-'") {
+		t.Errorf("expected error about starting with '-', got %q", m.errMsg)
+	}
+	if m.submitted != nil {
+		t.Error("expected no submission on validation error")
+	}
+}
+
+func TestUpdate_ValidationErrorBase(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	// Branch name is valid, but base branch is invalid.
+	m.baseBranch.SetValue("-bad-base")
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.errMsg == "" {
+		t.Error("expected validation error for base branch")
+	}
+	if !strings.Contains(m.errMsg, "base branch") {
+		t.Errorf("expected error to mention 'base branch', got %q", m.errMsg)
+	}
+	if m.submitted != nil {
+		t.Error("expected no submission on validation error")
+	}
+}
+
+func TestUpdate_SuccessfulSubmit(t *testing.T) {
+	m := New(testIssue(), "/tmp/repo", false, "both")
+	m.SetSize(80, 24)
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	req := m.SubmittedBranch()
+	if req == nil {
+		t.Fatal("expected branch request after successful submit")
+	}
+	if req.Name != "proj-123-fix-login-bug" {
+		t.Errorf("expected name 'proj-123-fix-login-bug', got %q", req.Name)
+	}
+	if req.Base != "main" {
+		t.Errorf("expected base 'main', got %q", req.Base)
+	}
+	if req.RepoPath != "/tmp/repo" {
+		t.Errorf("expected repoPath '/tmp/repo', got %q", req.RepoPath)
+	}
+	if req.Mode != "both" {
+		t.Errorf("expected mode 'both', got %q", req.Mode)
+	}
+	if m.errMsg != "" {
+		t.Errorf("expected no error on valid submit, got %q", m.errMsg)
+	}
+}
+
+func TestUpdate_NonKeyMsg(t *testing.T) {
+	// Ensure non-key messages are forwarded to the active text input.
+	m := New(testIssue(), "", false, "local")
+
+	// Send a non-key message (blink msg) to exercise the non-key branch.
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// No crash, model still functional.
+	if m.branchName.Value() != "proj-123-fix-login-bug" {
+		t.Error("expected branch name to be unchanged after window size msg")
+	}
+
+	// Same for activeInput == 1.
+	m.activeInput = 1
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if m.baseBranch.Value() != "main" {
+		t.Error("expected base branch to be unchanged after window size msg")
+	}
+}
+
+func TestUpdate_TypingInBaseBranch(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	m.branches = []string{"main", "develop", "feature/test"}
+
+	// Switch to base branch input.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.activeInput != 1 {
+		t.Fatal("expected activeInput 1 after tab")
+	}
+
+	// Type a character — triggers suggestion update through Update path.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+
+	// The input should have changed (appended 'f' to existing value).
+	// Suggestions should be updated based on the new value.
+	// We cannot easily predict the exact value since the textinput may handle
+	// cursor position, but the model should not have crashed.
+	if m.activeInput != 1 {
+		t.Error("expected to remain on base branch input")
+	}
+}
+
+func TestSlugify_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		uppercase bool
+		want      string
+	}{
+		{
+			name:      "empty input",
+			input:     "",
+			uppercase: false,
+			want:      "",
+		},
+		{
+			name:      "empty input uppercase",
+			input:     "",
+			uppercase: true,
+			want:      "",
+		},
+		{
+			name:      "only special characters",
+			input:     "!@#$%^&*()",
+			uppercase: false,
+			want:      "",
+		},
+		{
+			name:      "only special characters uppercase",
+			input:     "!@#$%^&*()",
+			uppercase: true,
+			want:      "",
+		},
+		{
+			name:      "very long input lowercase",
+			input:     "PROJ-1 " + strings.Repeat("word ", 30),
+			uppercase: false,
+		},
+		{
+			name:      "very long input uppercase",
+			input:     "PROJ-1 " + strings.Repeat("word ", 30),
+			uppercase: true,
+		},
+		{
+			name:      "single character",
+			input:     "a",
+			uppercase: false,
+			want:      "a",
+		},
+		{
+			name:      "hyphens only",
+			input:     "---",
+			uppercase: false,
+			want:      "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Slugify(tt.input, tt.uppercase)
+
+			// For long inputs, just check truncation.
+			if strings.Contains(tt.name, "very long") {
+				if len(got) > 80 {
+					t.Errorf("Slugify(%q, %v) = %q (len %d), want <= 80 chars",
+						tt.input, tt.uppercase, got, len(got))
+				}
+				if got == "" {
+					t.Errorf("Slugify(%q, %v) = empty, want non-empty for valid input",
+						tt.input, tt.uppercase)
+				}
+				return
+			}
+
+			if tt.want != "" || tt.input == "" || tt.input == "!@#$%^&*()" || tt.input == "---" {
+				if got != tt.want {
+					t.Errorf("Slugify(%q, %v) = %q, want %q",
+						tt.input, tt.uppercase, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestView_SuggestionsOverflowIndicator(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	// Create more than 8 branches to trigger the "... N more" indicator.
+	m.branches = make([]string, 15)
+	for i := range m.branches {
+		m.branches[i] = strings.Repeat("a", i+1) + "-branch"
+	}
+	m.activeInput = 1
+	m.baseBranch.SetValue("a")
+	m.updateSuggestions()
+	m.SetSize(80, 24)
+
+	if len(m.suggestions) <= 8 {
+		t.Fatalf("expected more than 8 suggestions, got %d", len(m.suggestions))
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "more") {
+		t.Error("expected View() to contain overflow indicator with 'more'")
+	}
+}
+
+func TestUpdate_SuggestionAcceptWithTab(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	m.branches = []string{"develop", "feature/login"}
+	m.activeInput = 1
+	m.baseBranch.SetValue("dev")
+	m.updateSuggestions()
+
+	if !m.showSugg {
+		t.Fatal("expected suggestions to be shown")
+	}
+
+	// Accept suggestion with tab (alternative to enter).
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.baseBranch.Value() != "develop" {
+		t.Errorf("expected baseBranch to be 'develop' after tab accept, got %q", m.baseBranch.Value())
+	}
+	if m.showSugg {
+		t.Error("expected suggestions to be closed after accepting with tab")
+	}
+}
+
+func TestUpdate_CtrlNCtrlPNavigation(t *testing.T) {
+	m := New(testIssue(), "", false, "local")
+	m.branches = []string{"develop", "feature/login", "feature/signup"}
+	m.activeInput = 1
+	m.baseBranch.SetValue("e")
+	m.updateSuggestions()
+
+	if m.suggIdx != 0 {
+		t.Fatalf("expected suggIdx 0, got %d", m.suggIdx)
+	}
+
+	// ctrl+n should navigate down.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	if m.suggIdx != 1 {
+		t.Errorf("expected suggIdx 1 after ctrl+n, got %d", m.suggIdx)
+	}
+
+	// ctrl+p should navigate up.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	if m.suggIdx != 0 {
+		t.Errorf("expected suggIdx 0 after ctrl+p, got %d", m.suggIdx)
 	}
 }

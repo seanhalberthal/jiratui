@@ -288,9 +288,11 @@ func WriteConfig(cfg *Config) error {
 	}
 
 	// Also set in current process so Load() will find them.
+	// Note: API token is NOT set in the environment — it is retrieved from the
+	// keychain on each Load()/PartialLoad() call. Setting it here would expose
+	// the token via /proc/self/environ or ps eww.
 	_ = os.Setenv("JIRA_DOMAIN", cfg.Domain)
 	_ = os.Setenv("JIRA_USER", cfg.User)
-	_ = os.Setenv("JIRA_API_TOKEN", cfg.APIToken)
 	_ = os.Setenv("JIRA_AUTH_TYPE", cfg.AuthType)
 	if cfg.Project != "" {
 		_ = os.Setenv("JIRA_PROJECT", cfg.Project)
