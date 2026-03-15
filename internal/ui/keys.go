@@ -4,21 +4,23 @@ import "github.com/charmbracelet/bubbles/key"
 
 // KeyMap defines global keybindings for the application.
 type KeyMap struct {
-	Up      key.Binding
-	Down    key.Binding
-	Top     key.Binding
-	Bottom  key.Binding
-	Open    key.Binding
-	Back    key.Binding
-	OpenURL key.Binding
-	Refresh key.Binding
-	Quit    key.Binding
-	Search  key.Binding // JQL search — now "?"
-	Home    key.Binding
-	Board   key.Binding
-	Setup   key.Binding
-	Branch  key.Binding
-	Create  key.Binding
+	Up         key.Binding
+	Down       key.Binding
+	Top        key.Binding
+	Bottom     key.Binding
+	Open       key.Binding
+	Back       key.Binding
+	OpenURL    key.Binding
+	Refresh    key.Binding
+	Quit       key.Binding
+	Search     key.Binding // JQL search — now "?"
+	Home       key.Binding
+	Board      key.Binding
+	Setup      key.Binding
+	Branch     key.Binding
+	Create     key.Binding
+	Transition key.Binding
+	Comment    key.Binding
 }
 
 // DefaultKeyMap returns the default vim-style keybindings.
@@ -83,6 +85,14 @@ func DefaultKeyMap() KeyMap {
 		Create: key.NewBinding(
 			key.WithKeys("c"),
 			key.WithHelp("c", "create issue"),
+		),
+		Transition: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "move"),
+		),
+		Comment: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "comment"),
 		),
 	}
 }

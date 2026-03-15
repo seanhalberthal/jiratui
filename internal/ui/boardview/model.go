@@ -81,6 +81,17 @@ func (m *Model) SelectedIssue() (jira.Issue, bool) {
 	return iss, true
 }
 
+// HighlightedIssue returns the currently highlighted issue without consuming it.
+func (m *Model) HighlightedIssue() (jira.Issue, bool) {
+	if len(m.columns) == 0 || m.activeCol >= len(m.columns) {
+		return jira.Issue{}, false
+	}
+	if iss := m.columns[m.activeCol].selectedIssue(); iss != nil {
+		return *iss, true
+	}
+	return jira.Issue{}, false
+}
+
 // ParentFilter returns the current parent filter key.
 func (m *Model) ParentFilter() string {
 	return m.parentFilter

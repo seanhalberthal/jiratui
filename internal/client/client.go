@@ -35,6 +35,9 @@ type JiraClient interface {
 	SearchUsers(project, prefix string) ([]UserInfo, error)
 	CreateIssue(req *CreateIssueRequest) (*CreateIssueResponse, error)
 	IssueTypes(project string) ([]string, error)
+	Transitions(key string) ([]jira.Transition, error)
+	TransitionIssue(key, transitionID string) error
+	AddComment(key, body string) error
 }
 
 // CreateIssueRequest holds the fields needed to create a Jira issue.
@@ -231,7 +234,7 @@ func (c *Client) ResolveParents(issues []jira.Issue) map[string]ParentInfo {
 				continue // skip malformed keys
 			}
 			seen[iss.ParentKey] = true
-			keys = append(keys, "'"+iss.ParentKey+"'")
+			keys = append(keys, "'"+jqlEscape(iss.ParentKey)+"'")
 		}
 	}
 
@@ -278,20 +281,27 @@ func EnrichWithParents(issues []jira.Issue, parents map[string]ParentInfo) []jir
 	return issues
 }
 
+// jqlEscape escapes single quotes in JQL string literals.
+// Jira JQL uses backslash-escaped single quotes within string values.
+func jqlEscape(s string) string {
+	return strings.ReplaceAll(s, `'`, `\'`)
+}
+
 // BoardIssues fetches all open issues for a board's project via JQL.
 // Used for kanban boards that don't have sprints.
 func (c *Client) BoardIssues(project string, statuses ...string) ([]jira.Issue, error) {
 	if err := validate.ProjectKey(project); err != nil {
 		return nil, fmt.Errorf("BoardIssues: %w", err)
 	}
-	jql := fmt.Sprintf("project = '%s' AND statusCategory != Done ORDER BY status ASC, updated DESC", project)
+	escapedProject := jqlEscape(project)
+	jql := fmt.Sprintf("project = '%s' AND statusCategory != Done ORDER BY status ASC, updated DESC", escapedProject)
 	if len(statuses) > 0 {
 		quoted := make([]string, len(statuses))
 		for i, s := range statuses {
-			quoted[i] = "'" + s + "'"
+			quoted[i] = "'" + jqlEscape(s) + "'"
 		}
 		jql = fmt.Sprintf("project = '%s' AND status in (%s) ORDER BY status ASC, updated DESC",
-			project, strings.Join(quoted, ", "))
+			escapedProject, strings.Join(quoted, ", "))
 	}
 	return c.SearchJQL(jql, 200)
 }
@@ -632,4 +642,41 @@ func convertIssue(iss *jiracli.Issue) jira.Issue {
 	}
 
 	return i
+}
+
+// Transitions returns the available status transitions for an issue.
+func (c *Client) Transitions(key string) ([]jira.Transition, error) {
+	raw, err := c.inner.TransitionsV2(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch transitions for %s: %w", key, err)
+	}
+	transitions := make([]jira.Transition, 0, len(raw))
+	for _, t := range raw {
+		transitions = append(transitions, jira.Transition{
+			ID:   string(t.ID),
+			Name: t.Name,
+		})
+	}
+	return transitions, nil
+}
+
+// TransitionIssue performs a status transition on an issue.
+func (c *Client) TransitionIssue(key, transitionID string) error {
+	req := &jiracli.TransitionRequest{
+		Transition: &jiracli.TransitionRequestData{ID: transitionID},
+	}
+	_, err := c.inner.Transition(key, req)
+	if err != nil {
+		return fmt.Errorf("failed to transition %s: %w", key, err)
+	}
+	return nil
+}
+
+// AddComment posts a comment on an issue.
+func (c *Client) AddComment(key, body string) error {
+	err := c.inner.AddIssueComment(key, body, false)
+	if err != nil {
+		return fmt.Errorf("failed to add comment to %s: %w", key, err)
+	}
+	return nil
 }

@@ -3,9 +3,11 @@ package ui
 import (
 	"fmt"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 
+	"al.essio.dev/pkg/shellescape"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -18,12 +20,14 @@ import (
 	"github.com/seanhalberthal/jiru/internal/theme"
 	"github.com/seanhalberthal/jiru/internal/ui/boardview"
 	"github.com/seanhalberthal/jiru/internal/ui/branchview"
+	"github.com/seanhalberthal/jiru/internal/ui/commentview"
 	"github.com/seanhalberthal/jiru/internal/ui/createview"
 	"github.com/seanhalberthal/jiru/internal/ui/homeview"
 	"github.com/seanhalberthal/jiru/internal/ui/issueview"
 	"github.com/seanhalberthal/jiru/internal/ui/searchview"
 	"github.com/seanhalberthal/jiru/internal/ui/setupview"
 	"github.com/seanhalberthal/jiru/internal/ui/sprintview"
+	"github.com/seanhalberthal/jiru/internal/ui/transitionview"
 )
 
 // view represents which pane is currently active.
@@ -39,6 +43,8 @@ const (
 	viewBoard
 	viewBranch
 	viewCreate
+	viewTransition
+	viewComment
 )
 
 // App is the root bubbletea model.
@@ -54,6 +60,8 @@ type App struct {
 	board         boardview.Model
 	branch        branchview.Model
 	create        createview.Model
+	transition    transitionview.Model
+	comment       commentview.Model
 	setup         setupview.Model
 	spinner       spinner.Model
 	width         int
@@ -121,6 +129,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.search.SetSize(msg.Width, contentHeight)
 		a.board.SetSize(msg.Width, contentHeight)
 		a.branch.SetSize(msg.Width, contentHeight)
+		a.transition.SetSize(msg.Width, contentHeight)
+		a.comment.SetSize(msg.Width, contentHeight)
 		a.setup.SetSize(msg.Width, msg.Height)
 		a.create.SetSize(msg.Width, msg.Height)
 		return a, nil
@@ -205,6 +215,33 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.previousView = a.active
 			a.active = viewCreate
 			return a, a.create.Init()
+		case key.Matches(msg, a.keys.Transition) && (a.active == viewIssue || a.active == viewBoard):
+			var issueKey string
+			switch a.active {
+			case viewIssue:
+				if iss := a.issue.CurrentIssue(); iss != nil {
+					issueKey = iss.Key
+				}
+			case viewBoard:
+				if iss, ok := a.board.HighlightedIssue(); ok {
+					issueKey = iss.Key
+				}
+			}
+			if issueKey != "" {
+				a.transition = transitionview.New(issueKey)
+				a.transition.SetSize(a.width, a.height-2)
+				a.previousView = a.active
+				a.active = viewTransition
+				return a, a.fetchTransitions(issueKey)
+			}
+		case key.Matches(msg, a.keys.Comment) && a.active == viewIssue:
+			if iss := a.issue.CurrentIssue(); iss != nil {
+				a.comment = commentview.New(iss.Key)
+				a.comment.SetSize(a.width, a.height-2)
+				a.previousView = a.active
+				a.active = viewComment
+				return a, nil
+			}
 		case key.Matches(msg, a.keys.Refresh) && a.active == viewSprint:
 			a.active = viewLoading
 			a.statusMsg = "Refreshing..."
@@ -266,11 +303,52 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.search.SetUserResults(msg.Names)
 		return a, nil
 
+	case TransitionsLoadedMsg:
+		if a.active == viewTransition {
+			a.transition.SetTransitions(msg.Transitions)
+		}
+		return a, nil
+
+	case IssueTransitionedMsg:
+		if a.active == viewTransition {
+			a.active = a.previousView
+			if msg.Err != nil {
+				a.err = msg.Err
+			} else {
+				a.statusMsg = fmt.Sprintf("Moved to %s", msg.NewStatus)
+				var cmds []tea.Cmd
+				if a.previousView == viewIssue {
+					// Re-fetch issue details to reflect the new status.
+					cmds = append(cmds, a.fetchIssueDetail(msg.Key))
+				}
+				if a.previousView == viewBoard || a.previousView == viewSprint {
+					// Refresh the board/sprint to reflect the status change.
+					cmds = append(cmds, a.refreshCurrentView())
+				}
+				if len(cmds) > 0 {
+					return a, tea.Batch(cmds...)
+				}
+			}
+		}
+		return a, nil
+
+	case CommentAddedMsg:
+		if a.active == viewComment {
+			a.active = viewIssue
+			if msg.Err != nil {
+				a.err = msg.Err
+			} else {
+				a.statusMsg = "Comment added"
+				return a, a.fetchIssueDetail(msg.Key)
+			}
+		}
+		return a, nil
+
 	case BranchCreatedMsg:
 		if a.active == viewBranch {
 			a.active = viewIssue
 			if msg.Err != nil {
-				a.err = msg.Err
+				a.err = sanitiseError(msg.Err)
 			} else if msg.Copied {
 				a.statusMsg = fmt.Sprintf("Copied to clipboard: %s", msg.Name)
 			} else {
@@ -291,7 +369,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case ErrMsg:
-		a.err = msg.Err
+		a.err = sanitiseError(msg.Err)
 		a.active = viewSprint
 		return a, nil
 
@@ -317,7 +395,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.setup.Done() {
 			cfg := a.setup.Config()
 			if err := config.WriteConfig(cfg); err != nil {
-				a.err = fmt.Errorf("failed to save config: %w", err)
+				a.err = sanitiseError(fmt.Errorf("failed to save config: %w", err))
 				a.active = viewLoading
 				return a, nil
 			}
@@ -380,6 +458,22 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.statusMsg = fmt.Sprintf("Created %s", key)
 			a.active = viewIssue
 			return a, a.fetchIssueDetail(key)
+		}
+	case viewTransition:
+		a.transition, cmd = a.transition.Update(msg)
+		if t := a.transition.Selected(); t != nil {
+			return a, a.transitionIssue(a.transition.IssueKey(), t.ID, t.Name)
+		}
+		if a.transition.Dismissed() {
+			a.active = a.previousView
+		}
+	case viewComment:
+		a.comment, cmd = a.comment.Update(msg)
+		if body := a.comment.SubmittedComment(); body != "" {
+			return a, a.addComment(a.comment.IssueKey(), body)
+		}
+		if a.comment.Dismissed() {
+			a.active = viewIssue
 		}
 	case viewSearch:
 		a.search, cmd = a.search.Update(msg)
@@ -452,6 +546,10 @@ func (a App) View() string {
 		content = a.board.View()
 	case viewBranch:
 		content = a.branch.View()
+	case viewTransition:
+		content = a.transition.View()
+	case viewComment:
+		content = a.comment.View()
 	}
 
 	if a.err != nil {
@@ -505,6 +603,12 @@ func (a App) inputActive() bool {
 	if a.active == viewBranch && a.branch.InputActive() {
 		return true
 	}
+	if a.active == viewTransition && a.transition.InputActive() {
+		return true
+	}
+	if a.active == viewComment && a.comment.InputActive() {
+		return true
+	}
 	return false
 }
 
@@ -525,6 +629,12 @@ func (a App) isBackKey(msg tea.KeyMsg) bool {
 // navigateBack moves to the parent view, or quits if already at the top level.
 func (a App) navigateBack() (tea.Model, tea.Cmd) {
 	switch a.active {
+	case viewTransition:
+		a.active = a.previousView
+		return a, nil
+	case viewComment:
+		a.active = viewIssue
+		return a, nil
 	case viewBranch:
 		a.active = viewIssue
 		return a, nil
@@ -666,6 +776,44 @@ func (a App) searchJQL(jql string) tea.Cmd {
 	}
 }
 
+func (a App) fetchTransitions(key string) tea.Cmd {
+	return func() tea.Msg {
+		transitions, err := a.client.Transitions(key)
+		if err != nil {
+			return ErrMsg{Err: err}
+		}
+		return TransitionsLoadedMsg{Key: key, Transitions: transitions}
+	}
+}
+
+func (a App) transitionIssue(key, transitionID, transitionName string) tea.Cmd {
+	return func() tea.Msg {
+		err := a.client.TransitionIssue(key, transitionID)
+		if err != nil {
+			return IssueTransitionedMsg{Key: key, Err: err}
+		}
+		return IssueTransitionedMsg{Key: key, NewStatus: transitionName}
+	}
+}
+
+func (a App) addComment(key, body string) tea.Cmd {
+	return func() tea.Msg {
+		err := a.client.AddComment(key, body)
+		if err != nil {
+			return CommentAddedMsg{Key: key, Err: err}
+		}
+		return CommentAddedMsg{Key: key}
+	}
+}
+
+// refreshCurrentView returns a command to re-fetch the current sprint or board issues.
+func (a App) refreshCurrentView() tea.Cmd {
+	if a.boardID != 0 {
+		return a.fetchActiveSprintForBoard(a.boardID)
+	}
+	return nil
+}
+
 func createBranch(req *branchview.BranchRequest) tea.Cmd {
 	return func() tea.Msg {
 		if req.RepoPath == "" {
@@ -679,6 +827,10 @@ func createBranch(req *branchview.BranchRequest) tea.Cmd {
 
 		switch mode {
 		case "remote":
+			// Validate refspec components don't contain ':'.
+			if strings.Contains(req.Name, ":") || strings.Contains(req.Base, ":") {
+				return BranchCreatedMsg{Err: fmt.Errorf("branch name and base must not contain ':'")}
+			}
 			// Push to origin without local checkout.
 			out, err := exec.Command("git", "-C", req.RepoPath,
 				"push", "origin", req.Base+":refs/heads/"+req.Name).CombinedOutput()
@@ -688,9 +840,9 @@ func createBranch(req *branchview.BranchRequest) tea.Cmd {
 			return BranchCreatedMsg{Name: req.Name, Mode: "remote"}
 
 		case "both":
-			// Create local branch.
+			// Create local branch. '--' prevents branch names from being interpreted as flags.
 			out, err := exec.Command("git", "-C", req.RepoPath,
-				"checkout", "-b", req.Name, req.Base).CombinedOutput()
+				"checkout", "-b", "--", req.Name, req.Base).CombinedOutput()
 			if err != nil {
 				return BranchCreatedMsg{Err: fmt.Errorf("%s", strings.TrimSpace(string(out)))}
 			}
@@ -703,8 +855,9 @@ func createBranch(req *branchview.BranchRequest) tea.Cmd {
 			return BranchCreatedMsg{Name: req.Name, Mode: "both"}
 
 		default: // "local"
+			// '--' prevents branch names from being interpreted as flags.
 			out, err := exec.Command("git", "-C", req.RepoPath,
-				"checkout", "-b", req.Name, req.Base).CombinedOutput()
+				"checkout", "-b", "--", req.Name, req.Base).CombinedOutput()
 			if err != nil {
 				return BranchCreatedMsg{Err: fmt.Errorf("%s", strings.TrimSpace(string(out)))}
 			}
@@ -717,11 +870,14 @@ func clipboardBranch(req *branchview.BranchRequest) BranchCreatedMsg {
 	var text string
 	switch req.Mode {
 	case "remote":
-		text = fmt.Sprintf("git push origin %s:refs/heads/%s", req.Base, req.Name)
+		text = fmt.Sprintf("git push origin %s:refs/heads/%s",
+			shellescape.Quote(req.Base), shellescape.Quote(req.Name))
 	case "both":
-		text = fmt.Sprintf("git checkout -b %s %s && git push -u origin %s", req.Name, req.Base, req.Name)
+		text = fmt.Sprintf("git checkout -b %s %s && git push -u origin %s",
+			shellescape.Quote(req.Name), shellescape.Quote(req.Base), shellescape.Quote(req.Name))
 	default:
-		text = fmt.Sprintf("git checkout -b %s %s", req.Name, req.Base)
+		text = fmt.Sprintf("git checkout -b %s %s",
+			shellescape.Quote(req.Name), shellescape.Quote(req.Base))
 	}
 
 	var cmd *exec.Cmd
@@ -778,6 +934,16 @@ func cycleParentFilter(groups []boardview.ParentGroup, current string) string {
 		}
 	}
 	return ""
+}
+
+var urlPattern = regexp.MustCompile(`https?://\S+`)
+
+// sanitiseError strips URL-like content from error messages to prevent
+// leaking API endpoints, tokens, or internal server details to the terminal.
+func sanitiseError(err error) error {
+	msg := err.Error()
+	clean := urlPattern.ReplaceAllString(msg, "[url redacted]")
+	return fmt.Errorf("%s", clean)
 }
 
 func isHTTPS(url string) bool {

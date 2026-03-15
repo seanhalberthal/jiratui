@@ -12,6 +12,10 @@ import (
 	"github.com/seanhalberthal/jiru/internal/config"
 	"github.com/seanhalberthal/jiru/internal/jira"
 	"github.com/seanhalberthal/jiru/internal/ui/boardview"
+	"github.com/seanhalberthal/jiru/internal/ui/branchview"
+	"github.com/seanhalberthal/jiru/internal/ui/commentview"
+	"github.com/seanhalberthal/jiru/internal/ui/createview"
+	"github.com/seanhalberthal/jiru/internal/ui/transitionview"
 )
 
 // --- Stub client ---
@@ -42,6 +46,10 @@ type stubClient struct {
 	statsDone    int
 	statsTotal   int
 	statsErr     error
+	transitions  []jira.Transition
+	transErr     error
+	transIssErr  error
+	commentErr   error
 }
 
 func (s *stubClient) Me() (string, error)                 { return s.meName, s.meErr }
@@ -87,6 +95,15 @@ func (s *stubClient) CreateIssue(_ *client.CreateIssueRequest) (*client.CreateIs
 }
 func (s *stubClient) IssueTypes(_ string) ([]string, error) {
 	return nil, nil
+}
+func (s *stubClient) Transitions(_ string) ([]jira.Transition, error) {
+	return s.transitions, s.transErr
+}
+func (s *stubClient) TransitionIssue(_, _ string) error {
+	return s.transIssErr
+}
+func (s *stubClient) AddComment(_, _ string) error {
+	return s.commentErr
 }
 
 func defaultStub() *stubClient {
@@ -1151,6 +1168,141 @@ func TestApp_QKey_FromCreate_ReturnsToPreviousView(t *testing.T) {
 	}
 }
 
+// --- BranchCreatedMsg tests ---
+
+func TestApp_BranchCreatedMsg_Success_Local(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewBranch
+
+	model, _ := app.Update(BranchCreatedMsg{Name: "feat/test", Mode: "local"})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue after branch creation, got %d", a.active)
+	}
+	if a.statusMsg == "" {
+		t.Error("expected status message after branch creation")
+	}
+	if !strings.Contains(a.statusMsg, "feat/test") {
+		t.Errorf("expected branch name in status, got %q", a.statusMsg)
+	}
+}
+
+func TestApp_BranchCreatedMsg_Success_Remote(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewBranch
+
+	model, _ := app.Update(BranchCreatedMsg{Name: "feat/test", Mode: "remote"})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue, got %d", a.active)
+	}
+	if !strings.Contains(a.statusMsg, "Pushed") {
+		t.Errorf("expected 'Pushed' in status, got %q", a.statusMsg)
+	}
+}
+
+func TestApp_BranchCreatedMsg_Success_Both(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewBranch
+
+	model, _ := app.Update(BranchCreatedMsg{Name: "feat/test", Mode: "both"})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue, got %d", a.active)
+	}
+	if !strings.Contains(a.statusMsg, "pushed") {
+		t.Errorf("expected 'pushed' in status, got %q", a.statusMsg)
+	}
+}
+
+func TestApp_BranchCreatedMsg_Copied(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewBranch
+
+	model, _ := app.Update(BranchCreatedMsg{Name: "feat/test", Copied: true})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue, got %d", a.active)
+	}
+	if !strings.Contains(a.statusMsg, "Copied") {
+		t.Errorf("expected 'Copied' in status, got %q", a.statusMsg)
+	}
+}
+
+func TestApp_BranchCreatedMsg_Error(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewBranch
+
+	model, _ := app.Update(BranchCreatedMsg{Err: fmt.Errorf("push failed")})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue even on error, got %d", a.active)
+	}
+	if a.err == nil {
+		t.Error("expected error to be set")
+	}
+}
+
+func TestApp_BranchCreatedMsg_IgnoredWhenNotInBranchView(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSprint
+
+	model, _ := app.Update(BranchCreatedMsg{Name: "feat/test", Mode: "local"})
+	a := model.(App)
+
+	if a.active != viewSprint {
+		t.Errorf("expected viewSprint unchanged, got %d", a.active)
+	}
+}
+
+// --- sanitiseError tests ---
+
+func TestSanitiseError_StripsURLs(t *testing.T) {
+	err := fmt.Errorf("failed to call https://my.jira.net/rest/api/2/issue: 403")
+	got := sanitiseError(err)
+	if strings.Contains(got.Error(), "https://") {
+		t.Errorf("expected URL stripped, got %q", got.Error())
+	}
+	if !strings.Contains(got.Error(), "[url redacted]") {
+		t.Errorf("expected [url redacted], got %q", got.Error())
+	}
+}
+
+func TestSanitiseError_StripsHTTP(t *testing.T) {
+	err := fmt.Errorf("failed: http://internal.server:8080/api")
+	got := sanitiseError(err)
+	if strings.Contains(got.Error(), "http://") {
+		t.Errorf("expected http URL stripped, got %q", got.Error())
+	}
+}
+
+func TestSanitiseError_PreservesNonURLErrors(t *testing.T) {
+	err := fmt.Errorf("something broke")
+	got := sanitiseError(err)
+	if got.Error() != "something broke" {
+		t.Errorf("expected unchanged error, got %q", got.Error())
+	}
+}
+
+func TestSanitiseError_MultipleURLs(t *testing.T) {
+	err := fmt.Errorf("tried https://a.com and https://b.com")
+	got := sanitiseError(err)
+	if strings.Contains(got.Error(), "https://") {
+		t.Errorf("expected all URLs stripped, got %q", got.Error())
+	}
+}
+
 // --- Footer tests ---
 
 func TestFooterView_Loading(t *testing.T) {
@@ -1200,5 +1352,700 @@ func TestFooterView_Truncation(t *testing.T) {
 	// Should not exceed the specified width.
 	if len(v) > 100 { // generous buffer for ANSI codes
 		t.Error("footer should be truncated for narrow width")
+	}
+}
+
+func TestFooterView_Transition(t *testing.T) {
+	v := footerView(viewTransition, 120, "")
+	if !strings.Contains(v, "select") {
+		t.Error("expected 'select' in transition footer")
+	}
+	if !strings.Contains(v, "back") {
+		t.Error("expected 'back' in transition footer")
+	}
+}
+
+func TestFooterView_Comment(t *testing.T) {
+	v := footerView(viewComment, 120, "")
+	if !strings.Contains(v, "submit") {
+		t.Error("expected 'submit' in comment footer")
+	}
+	if !strings.Contains(v, "back") {
+		t.Error("expected 'back' in comment footer")
+	}
+}
+
+// --- Transition view tests ---
+
+func TestApp_TransitionKey_FromIssue(t *testing.T) {
+	c := defaultStub()
+	c.transitions = []jira.Transition{{ID: "1", Name: "In Progress"}}
+	app := newTestApp(c, "")
+
+	// Move to issue view with an actual issue set.
+	model, _ := app.Update(IssueSelectedMsg{Issue: jira.Issue{Key: "PROJ-1", Summary: "Test", Status: "To Do"}})
+	a := model.(App)
+	a.previousView = viewSprint
+
+	// Press 'm' to open transition view.
+	model, cmd := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
+	a = model.(App)
+
+	if a.active != viewTransition {
+		t.Errorf("expected viewTransition, got %d", a.active)
+	}
+	if a.previousView != viewIssue {
+		t.Errorf("expected previousView viewIssue, got %d", a.previousView)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd (fetchTransitions)")
+	}
+}
+
+func TestApp_TransitionKey_IgnoredFromSprint(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSprint
+
+	// 'm' from sprint view should not trigger transition.
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
+	a := model.(App)
+
+	if a.active != viewSprint {
+		t.Errorf("expected viewSprint unchanged, got %d", a.active)
+	}
+}
+
+func TestApp_TransitionKey_IgnoredWhenNoIssue(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	// In issue view but without setting an actual issue.
+	app.active = viewIssue
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
+	a := model.(App)
+
+	// Should stay in viewIssue because CurrentIssue() returns nil.
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue unchanged, got %d", a.active)
+	}
+}
+
+func TestApp_CommentKey_FromIssue(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+
+	// Move to issue view with an actual issue.
+	model, _ := app.Update(IssueSelectedMsg{Issue: jira.Issue{Key: "PROJ-1", Summary: "Test", Status: "To Do"}})
+	a := model.(App)
+	a.previousView = viewSprint
+
+	// Press 'c' from issue view — should open comment (not create).
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	a = model.(App)
+
+	if a.active != viewComment {
+		t.Errorf("expected viewComment, got %d", a.active)
+	}
+	if a.previousView != viewIssue {
+		t.Errorf("expected previousView viewIssue, got %d", a.previousView)
+	}
+}
+
+func TestApp_CommentKey_IgnoredWhenNoIssue(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	// In issue view but without setting an actual issue.
+	app.active = viewIssue
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	a := model.(App)
+
+	// Should stay in viewIssue because CurrentIssue() returns nil.
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue unchanged, got %d", a.active)
+	}
+}
+
+func TestApp_TransitionsLoadedMsg_SetsTransitions(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+
+	// Set up app in transition view.
+	app.transition = transitionview.New("PROJ-1")
+	app.transition.SetSize(120, 38)
+	app.active = viewTransition
+
+	transitions := []jira.Transition{
+		{ID: "1", Name: "In Progress"},
+		{ID: "2", Name: "Done"},
+	}
+	model, _ := app.Update(TransitionsLoadedMsg{Key: "PROJ-1", Transitions: transitions})
+	a := model.(App)
+
+	// Should still be in transition view (no panic, no state change).
+	if a.active != viewTransition {
+		t.Errorf("expected viewTransition, got %d", a.active)
+	}
+}
+
+func TestApp_TransitionsLoadedMsg_IgnoredWhenNotInTransitionView(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSprint
+
+	transitions := []jira.Transition{{ID: "1", Name: "In Progress"}}
+	model, _ := app.Update(TransitionsLoadedMsg{Key: "PROJ-1", Transitions: transitions})
+	a := model.(App)
+
+	if a.active != viewSprint {
+		t.Errorf("expected viewSprint unchanged, got %d", a.active)
+	}
+}
+
+func TestApp_IssueTransitionedMsg_Success(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewTransition
+	app.previousView = viewIssue
+	c.issue = &jira.Issue{Key: "PROJ-1", Summary: "Test", Status: "In Progress"}
+
+	model, cmd := app.Update(IssueTransitionedMsg{Key: "PROJ-1", NewStatus: "In Progress"})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue after transition, got %d", a.active)
+	}
+	if a.statusMsg != "Moved to In Progress" {
+		t.Errorf("expected 'Moved to In Progress', got %q", a.statusMsg)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd (fetchIssueDetail to refresh)")
+	}
+}
+
+func TestApp_IssueTransitionedMsg_Success_FromBoard(t *testing.T) {
+	c := defaultStub()
+	c.boardSprints = []jira.Sprint{{ID: 10, Name: "Sprint 10"}}
+	app := newTestApp(c, "")
+	app.active = viewTransition
+	app.previousView = viewBoard
+	app.boardID = 42
+
+	model, cmd := app.Update(IssueTransitionedMsg{Key: "PROJ-1", NewStatus: "Done"})
+	a := model.(App)
+
+	if a.active != viewBoard {
+		t.Errorf("expected viewBoard after transition, got %d", a.active)
+	}
+	if a.statusMsg != "Moved to Done" {
+		t.Errorf("expected 'Moved to Done', got %q", a.statusMsg)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd (refreshCurrentView)")
+	}
+}
+
+func TestApp_IssueTransitionedMsg_Error(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewTransition
+	app.previousView = viewIssue
+
+	model, _ := app.Update(IssueTransitionedMsg{Key: "PROJ-1", Err: errors.New("transition failed")})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue on error, got %d", a.active)
+	}
+	if a.err == nil || a.err.Error() != "transition failed" {
+		t.Errorf("expected error 'transition failed', got %v", a.err)
+	}
+}
+
+func TestApp_IssueTransitionedMsg_IgnoredWhenNotInTransitionView(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSprint
+
+	model, _ := app.Update(IssueTransitionedMsg{Key: "PROJ-1", NewStatus: "Done"})
+	a := model.(App)
+
+	if a.active != viewSprint {
+		t.Errorf("expected viewSprint unchanged, got %d", a.active)
+	}
+}
+
+func TestApp_CommentAddedMsg_Success(t *testing.T) {
+	c := defaultStub()
+	c.issue = &jira.Issue{Key: "PROJ-1", Summary: "Test", Status: "To Do"}
+	app := newTestApp(c, "")
+	app.active = viewComment
+	app.comment = commentview.New("PROJ-1")
+	app.comment.SetSize(120, 38)
+
+	model, cmd := app.Update(CommentAddedMsg{Key: "PROJ-1"})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue after comment, got %d", a.active)
+	}
+	if a.statusMsg != "Comment added" {
+		t.Errorf("expected 'Comment added', got %q", a.statusMsg)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd (fetchIssueDetail to refresh)")
+	}
+}
+
+func TestApp_CommentAddedMsg_Error(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewComment
+	app.comment = commentview.New("PROJ-1")
+	app.comment.SetSize(120, 38)
+
+	model, _ := app.Update(CommentAddedMsg{Key: "PROJ-1", Err: errors.New("comment failed")})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue on error, got %d", a.active)
+	}
+	if a.err == nil || a.err.Error() != "comment failed" {
+		t.Errorf("expected error 'comment failed', got %v", a.err)
+	}
+}
+
+func TestApp_CommentAddedMsg_IgnoredWhenNotInCommentView(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSprint
+
+	model, _ := app.Update(CommentAddedMsg{Key: "PROJ-1"})
+	a := model.(App)
+
+	if a.active != viewSprint {
+		t.Errorf("expected viewSprint unchanged, got %d", a.active)
+	}
+}
+
+// --- Back navigation for new views ---
+
+func TestApp_BackKey_FromTransition_ReturnsToPreviousView(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewTransition
+	app.previousView = viewIssue
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue, got %d", a.active)
+	}
+}
+
+func TestApp_BackKey_FromTransition_ReturnsToBoardView(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewTransition
+	app.previousView = viewBoard
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a := model.(App)
+
+	if a.active != viewBoard {
+		t.Errorf("expected viewBoard, got %d", a.active)
+	}
+}
+
+func TestApp_BackKey_FromComment_ReturnsToIssue(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewComment
+	app.previousView = viewIssue
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue, got %d", a.active)
+	}
+}
+
+func TestApp_QKey_FromTransition_SuppressedByInputActive(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.transition = transitionview.New("PROJ-1")
+	app.transition.SetSize(120, 38)
+	app.active = viewTransition
+	app.previousView = viewIssue
+
+	// 'q' is suppressed by inputActive() — stays in transition view.
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	a := model.(App)
+
+	if a.active != viewTransition {
+		t.Errorf("expected viewTransition (q suppressed), got %d", a.active)
+	}
+}
+
+func TestApp_QKey_FromComment_SuppressedByInputActive(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.comment = commentview.New("PROJ-1")
+	app.comment.SetSize(120, 38)
+	app.active = viewComment
+	app.previousView = viewIssue
+
+	// 'q' is suppressed by inputActive() — stays in comment view.
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	a := model.(App)
+
+	if a.active != viewComment {
+		t.Errorf("expected viewComment (q suppressed), got %d", a.active)
+	}
+}
+
+func TestApp_EscKey_FromTransition_DismissesViaChildModel(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.transition = transitionview.New("PROJ-1")
+	app.transition.SetSize(120, 38)
+	app.transition.SetTransitions([]jira.Transition{{ID: "1", Name: "Done"}})
+	app.active = viewTransition
+	app.previousView = viewIssue
+
+	// Esc is handled by child's Update, which sets Dismissed() — parent polls it.
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue after esc from transition, got %d", a.active)
+	}
+}
+
+func TestApp_EscKey_FromComment_DismissesViaChildModel(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.comment = commentview.New("PROJ-1")
+	app.comment.SetSize(120, 38)
+	app.active = viewComment
+	app.previousView = viewIssue
+
+	// Esc is handled by child's Update, which sets Dismissed() — parent polls it.
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue after esc from comment, got %d", a.active)
+	}
+}
+
+// --- View rendering for new view states ---
+
+func TestApp_View_Transition(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.transition = transitionview.New("PROJ-1")
+	app.transition.SetSize(120, 38)
+	app.active = viewTransition
+
+	v := app.View()
+	if v == "" {
+		t.Error("expected non-empty transition view")
+	}
+	if !strings.Contains(v, "PROJ-1") {
+		t.Error("expected issue key in transition view")
+	}
+}
+
+func TestApp_View_Transition_WithTransitions(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.transition = transitionview.New("PROJ-1")
+	app.transition.SetSize(120, 38)
+	app.transition.SetTransitions([]jira.Transition{
+		{ID: "1", Name: "In Progress"},
+		{ID: "2", Name: "Done"},
+	})
+	app.active = viewTransition
+
+	v := app.View()
+	if !strings.Contains(v, "In Progress") {
+		t.Error("expected 'In Progress' in transition view")
+	}
+}
+
+func TestApp_View_Comment(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.comment = commentview.New("PROJ-2")
+	app.comment.SetSize(120, 38)
+	app.active = viewComment
+
+	v := app.View()
+	if v == "" {
+		t.Error("expected non-empty comment view")
+	}
+	if !strings.Contains(v, "PROJ-2") {
+		t.Error("expected issue key in comment view")
+	}
+}
+
+func TestApp_View_Branch(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.branch = branchview.New(jira.Issue{Key: "PROJ-3", Summary: "Branch test"}, "", false, "local")
+	app.branch.SetSize(120, 38)
+	app.active = viewBranch
+
+	v := app.View()
+	if v == "" {
+		t.Error("expected non-empty branch view")
+	}
+}
+
+func TestApp_View_StatusMessage(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSprint
+	app.statusMsg = "Moved to In Progress"
+
+	v := app.View()
+	if !strings.Contains(v, "Moved to In Progress") {
+		t.Error("expected status message in view output")
+	}
+}
+
+func TestApp_View_Create(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.create = createview.New(c)
+	app.create.SetSize(120, 40)
+	app.active = viewCreate
+
+	v := app.View()
+	if v == "" {
+		t.Error("expected non-empty create view")
+	}
+}
+
+// --- inputActive tests for new views ---
+
+func TestApp_InputActive_Transition(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.transition = transitionview.New("PROJ-1")
+	app.transition.SetSize(120, 38)
+	app.active = viewTransition
+
+	if !app.inputActive() {
+		t.Error("expected inputActive() to return true in viewTransition")
+	}
+}
+
+func TestApp_InputActive_Comment(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.comment = commentview.New("PROJ-1")
+	app.comment.SetSize(120, 38)
+	app.active = viewComment
+
+	if !app.inputActive() {
+		t.Error("expected inputActive() to return true in viewComment")
+	}
+}
+
+func TestApp_InputActive_FalseForSprint(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSprint
+
+	if app.inputActive() {
+		t.Error("expected inputActive() to return false in viewSprint (not filtering)")
+	}
+}
+
+func TestApp_InputActive_FalseForIssue(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewIssue
+
+	if app.inputActive() {
+		t.Error("expected inputActive() to return false in viewIssue")
+	}
+}
+
+// --- Command execution tests for transitions/comments ---
+
+func TestApp_FetchTransitions_Success(t *testing.T) {
+	c := defaultStub()
+	c.transitions = []jira.Transition{
+		{ID: "1", Name: "In Progress"},
+		{ID: "2", Name: "Done"},
+	}
+	app := NewApp(c, "", nil, nil, "")
+
+	cmd := app.fetchTransitions("PROJ-1")
+	msg := cmd()
+
+	loaded, ok := msg.(TransitionsLoadedMsg)
+	if !ok {
+		t.Fatalf("expected TransitionsLoadedMsg, got %T", msg)
+	}
+	if loaded.Key != "PROJ-1" {
+		t.Errorf("expected key 'PROJ-1', got %q", loaded.Key)
+	}
+	if len(loaded.Transitions) != 2 {
+		t.Errorf("expected 2 transitions, got %d", len(loaded.Transitions))
+	}
+}
+
+func TestApp_FetchTransitions_Error(t *testing.T) {
+	c := defaultStub()
+	c.transErr = errors.New("transitions failed")
+	app := NewApp(c, "", nil, nil, "")
+
+	cmd := app.fetchTransitions("PROJ-1")
+	msg := cmd()
+
+	if _, ok := msg.(ErrMsg); !ok {
+		t.Fatalf("expected ErrMsg, got %T", msg)
+	}
+}
+
+func TestApp_TransitionIssue_Success(t *testing.T) {
+	c := defaultStub()
+	app := NewApp(c, "", nil, nil, "")
+
+	cmd := app.transitionIssue("PROJ-1", "2", "Done")
+	msg := cmd()
+
+	transitioned, ok := msg.(IssueTransitionedMsg)
+	if !ok {
+		t.Fatalf("expected IssueTransitionedMsg, got %T", msg)
+	}
+	if transitioned.Key != "PROJ-1" {
+		t.Errorf("expected key 'PROJ-1', got %q", transitioned.Key)
+	}
+	if transitioned.NewStatus != "Done" {
+		t.Errorf("expected 'Done', got %q", transitioned.NewStatus)
+	}
+	if transitioned.Err != nil {
+		t.Errorf("expected nil error, got %v", transitioned.Err)
+	}
+}
+
+func TestApp_TransitionIssue_Error(t *testing.T) {
+	c := defaultStub()
+	c.transIssErr = errors.New("transition failed")
+	app := NewApp(c, "", nil, nil, "")
+
+	cmd := app.transitionIssue("PROJ-1", "2", "Done")
+	msg := cmd()
+
+	transitioned, ok := msg.(IssueTransitionedMsg)
+	if !ok {
+		t.Fatalf("expected IssueTransitionedMsg, got %T", msg)
+	}
+	if transitioned.Err == nil {
+		t.Error("expected error")
+	}
+}
+
+func TestApp_AddComment_Success(t *testing.T) {
+	c := defaultStub()
+	app := NewApp(c, "", nil, nil, "")
+
+	cmd := app.addComment("PROJ-1", "This is a comment")
+	msg := cmd()
+
+	added, ok := msg.(CommentAddedMsg)
+	if !ok {
+		t.Fatalf("expected CommentAddedMsg, got %T", msg)
+	}
+	if added.Key != "PROJ-1" {
+		t.Errorf("expected key 'PROJ-1', got %q", added.Key)
+	}
+	if added.Err != nil {
+		t.Errorf("expected nil error, got %v", added.Err)
+	}
+}
+
+func TestApp_AddComment_Error(t *testing.T) {
+	c := defaultStub()
+	c.commentErr = errors.New("comment failed")
+	app := NewApp(c, "", nil, nil, "")
+
+	cmd := app.addComment("PROJ-1", "This is a comment")
+	msg := cmd()
+
+	added, ok := msg.(CommentAddedMsg)
+	if !ok {
+		t.Fatalf("expected CommentAddedMsg, got %T", msg)
+	}
+	if added.Err == nil {
+		t.Error("expected error")
+	}
+}
+
+// --- Refresh current view ---
+
+func TestApp_RefreshCurrentView_WithBoardID(t *testing.T) {
+	c := defaultStub()
+	c.boardSprints = []jira.Sprint{{ID: 10, Name: "Sprint 10"}}
+	app := newTestApp(c, "")
+	app.boardID = 42
+
+	cmd := app.refreshCurrentView()
+	if cmd == nil {
+		t.Error("expected non-nil cmd when boardID is set")
+	}
+}
+
+func TestApp_RefreshCurrentView_NoBoardID(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.boardID = 0
+
+	cmd := app.refreshCurrentView()
+	if cmd != nil {
+		t.Error("expected nil cmd when boardID is zero")
+	}
+}
+
+// --- sanitiseError on BranchCreatedMsg ---
+
+func TestApp_BranchCreatedMsg_ErrorWithURL_IsSanitised(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewBranch
+
+	model, _ := app.Update(BranchCreatedMsg{Err: fmt.Errorf("failed: https://internal.server/api")})
+	a := model.(App)
+
+	if a.err == nil {
+		t.Fatal("expected error to be set")
+	}
+	if strings.Contains(a.err.Error(), "https://") {
+		t.Errorf("expected URL stripped from error, got %q", a.err.Error())
+	}
+	if !strings.Contains(a.err.Error(), "[url redacted]") {
+		t.Errorf("expected [url redacted], got %q", a.err.Error())
+	}
+}
+
+// --- ErrMsg sanitisation ---
+
+func TestApp_ErrMsg_SanitisesURLs(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+
+	model, _ := app.Update(ErrMsg{Err: fmt.Errorf("request to https://api.jira.com/rest/api/2 failed")})
+	a := model.(App)
+
+	if strings.Contains(a.err.Error(), "https://") {
+		t.Errorf("expected URL sanitised in ErrMsg, got %q", a.err.Error())
 	}
 }
