@@ -67,6 +67,12 @@ type BoardStats struct {
 	TotalIssues  int
 }
 
+// Transition represents an available status transition for an issue.
+type Transition struct {
+	ID   string
+	Name string
+}
+
 // JQLMetadata holds cached metadata for JQL autocompletion.
 type JQLMetadata struct {
 	Statuses    []string

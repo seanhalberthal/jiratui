@@ -82,3 +82,22 @@ type BranchCreatedMsg struct {
 	Copied bool   // True when the command was copied to clipboard instead of executed.
 	Err    error
 }
+
+// TransitionsLoadedMsg carries available transitions for an issue.
+type TransitionsLoadedMsg struct {
+	Key         string
+	Transitions []jira.Transition
+}
+
+// IssueTransitionedMsg is sent after a status transition completes.
+type IssueTransitionedMsg struct {
+	Key       string
+	NewStatus string
+	Err       error
+}
+
+// CommentAddedMsg is sent after a comment is posted.
+type CommentAddedMsg struct {
+	Key string
+	Err error
+}

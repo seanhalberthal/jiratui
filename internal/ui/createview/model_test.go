@@ -52,6 +52,9 @@ func (s *stubClient) CreateIssue(_ *client.CreateIssueRequest) (*client.CreateIs
 func (s *stubClient) IssueTypes(_ string) ([]string, error) {
 	return s.issueTypes, s.issueTypesErr
 }
+func (s *stubClient) Transitions(_ string) ([]jira.Transition, error) { return nil, nil }
+func (s *stubClient) TransitionIssue(_, _ string) error               { return nil }
+func (s *stubClient) AddComment(_, _ string) error                    { return nil }
 
 func defaultStub() *stubClient {
 	return &stubClient{

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 var (
@@ -56,6 +57,42 @@ func AuthType(at string) error {
 	default:
 		return fmt.Errorf("invalid auth type %q: must be 'basic' or 'bearer'", at)
 	}
+}
+
+// invalidBranchChars matches characters disallowed in git branch names.
+var invalidBranchChars = regexp.MustCompile(`[\x00-\x1f\x7f ~^:?*\[\\]`)
+
+// BranchName validates a string as a legal git branch name.
+// Enforces rules from git-check-ref-format(1).
+func BranchName(name string) error {
+	if name == "" {
+		return fmt.Errorf("branch name must not be empty")
+	}
+	if strings.HasPrefix(name, "-") {
+		return fmt.Errorf("branch name must not start with '-'")
+	}
+	if strings.HasPrefix(name, ".") {
+		return fmt.Errorf("branch name must not start with '.'")
+	}
+	if strings.HasSuffix(name, ".lock") {
+		return fmt.Errorf("branch name must not end with '.lock'")
+	}
+	if strings.HasSuffix(name, ".") {
+		return fmt.Errorf("branch name must not end with '.'")
+	}
+	if strings.Contains(name, "..") {
+		return fmt.Errorf("branch name must not contain '..'")
+	}
+	if strings.Contains(name, "@{") {
+		return fmt.Errorf("branch name must not contain '@{'")
+	}
+	if name == "@" {
+		return fmt.Errorf("branch name must not be '@'")
+	}
+	if invalidBranchChars.MatchString(name) {
+		return fmt.Errorf("branch name contains invalid characters")
+	}
+	return nil
 }
 
 // BoardID validates a board ID string (positive integer).

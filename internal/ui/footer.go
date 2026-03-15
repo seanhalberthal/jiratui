@@ -41,6 +41,7 @@ func footerView(active view, width int, version string, extra ...footerBinding) 
 			nav,
 			{"h/l", "columns"},
 			open, back,
+			{"m", "move"},
 		}
 		bindings = append(bindings, extra...)
 		bindings = append(bindings,
@@ -50,6 +51,8 @@ func footerView(active view, width int, version string, extra ...footerBinding) 
 	case viewIssue:
 		bindings = []footerBinding{
 			nav, back,
+			{"m", "move"},
+			{"c", "comment"},
 			{"o", "browser"},
 			{"n", "branch"},
 			search,
@@ -63,6 +66,14 @@ func footerView(active view, width int, version string, extra ...footerBinding) 
 			{"enter", "search"},
 			{"tab", "complete"},
 			{"esc", "close"},
+		}
+	case viewTransition:
+		bindings = []footerBinding{
+			nav, {"enter", "select"}, back,
+		}
+	case viewComment:
+		bindings = []footerBinding{
+			{"ctrl+s", "submit"}, back,
 		}
 	case viewLoading:
 		bindings = []footerBinding{quit}
