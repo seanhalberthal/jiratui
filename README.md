@@ -1,6 +1,10 @@
 <div align="center">
 
-# jiru
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/logo-light.svg">
+  <img alt="jiru" src=".github/assets/logo-dark.svg" width="320">
+</picture>
 
 **A terminal UI for Jira — browse boards, search with JQL, and read issues without leaving the terminal.**
 
