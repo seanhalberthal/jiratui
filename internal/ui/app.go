@@ -74,6 +74,7 @@ type App struct {
 	currentIssues []jira.Issue // Cached for list↔board toggle.
 	boardTitle    string       // Dynamic title: sprint name, board name, project key, etc.
 	jqlMetaLoaded bool         // Prevents redundant metadata fetches.
+	paginationSeq int          // Incremented each time a new fetch starts; stale pages are discarded.
 	version       string
 }
 
@@ -142,6 +143,20 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ctrl+c always quits, regardless of input state.
 		if msg.String() == "ctrl+c" {
 			return a, tea.Quit
+		}
+
+		// Dismiss error overlay on esc/q.
+		if a.err != nil {
+			if a.isBackKey(msg) {
+				a.err = nil
+				// If stuck at loading (nothing will re-trigger), navigate back.
+				if a.active == viewLoading {
+					return a.navigateBack()
+				}
+				return a, nil
+			}
+			// Swallow all other keys while error is showing.
+			return a, nil
 		}
 
 		// Setup wizard handles all its own keys (esc, enter, ctrl+b).
@@ -242,32 +257,93 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.active = viewComment
 				return a, nil
 			}
-		case key.Matches(msg, a.keys.Refresh) && a.active == viewSprint:
+		case key.Matches(msg, a.keys.Refresh) && (a.active == viewSprint || a.active == viewBoard):
+			a.previousView = a.active
 			a.active = viewLoading
 			a.statusMsg = "Refreshing..."
-			return a, tea.Batch(a.spinner.Tick, a.fetchActiveSprint())
+			a.paginationSeq++
+			return a, tea.Batch(a.spinner.Tick, a.fetchActiveSprintForBoard(a.boardID))
 		}
 
 	case ClientReadyMsg:
+		a.err = nil
 		a.statusMsg = fmt.Sprintf("Authenticated as %s", msg.DisplayName)
+		// Fetch JQL metadata (statuses, types, etc.) eagerly — used by
+		// both search autocomplete and the board view column layout.
+		var metaCmd tea.Cmd
+		if !a.jqlMetaLoaded {
+			metaCmd = a.fetchJQLMetadata()
+		}
 		if a.directIssue != "" {
-			return a, a.fetchIssueDetail(a.directIssue)
+			return a, tea.Batch(a.fetchIssueDetail(a.directIssue), metaCmd)
 		}
 		if a.client.Config().BoardID != 0 {
 			a.boardID = a.client.Config().BoardID
-			return a, a.fetchActiveSprintForBoard(a.boardID)
+			a.paginationSeq++
+			return a, tea.Batch(a.fetchActiveSprintForBoard(a.boardID), metaCmd)
 		}
-		return a, a.fetchBoards()
+		return a, tea.Batch(a.fetchBoards(), metaCmd)
 
 	case SprintLoadedMsg:
+		a.err = nil
 		a.statusMsg = msg.Sprint.Name
+		a.paginationSeq++
 		return a, a.fetchSprintIssues(msg.Sprint.ID, msg.Sprint.Name)
 
 	case IssuesLoadedMsg:
-		a.active = viewSprint
+		a.err = nil
+		if a.previousView == viewBoard {
+			a.active = viewBoard
+		} else {
+			a.active = viewSprint
+		}
 		a.currentIssues = msg.Issues
 		a.boardTitle = msg.Title
 		a.sprint = a.sprint.SetIssues(msg.Issues)
+		if msg.HasMore {
+			a.sprint = a.sprint.SetLoading(true)
+			return a, a.fetchMoreIssues(IssuesPageMsg{
+				Source:     msg.Source,
+				From:       msg.From,
+				SprintID:   msg.SprintID,
+				SprintName: msg.SprintName,
+				EpicKey:    msg.EpicKey,
+				JQL:        msg.JQL,
+				Project:    msg.Project,
+				NextToken:  msg.NextToken,
+				Seq:        msg.Seq,
+			})
+		}
+		// Single page — populate board immediately.
+		a.board.SetIssues(msg.Issues, msg.Title)
+		return a, nil
+
+	case IssuesPageMsg:
+		if msg.Seq != a.paginationSeq {
+			return a, nil // Stale page from a previous fetch — discard.
+		}
+		switch msg.Source {
+		case "search":
+			a.search.AppendResults(msg.Issues)
+		default:
+			// Dedup — Jira's offset-based pagination can return overlapping results.
+			seen := make(map[string]bool, len(a.currentIssues))
+			for _, iss := range a.currentIssues {
+				seen[iss.Key] = true
+			}
+			for _, iss := range msg.Issues {
+				if !seen[iss.Key] {
+					a.currentIssues = append(a.currentIssues, iss)
+				}
+			}
+			a.sprint = a.sprint.AppendIssues(msg.Issues)
+		}
+		if msg.HasMore {
+			return a, a.fetchMoreIssues(msg)
+		}
+		// All pages loaded — populate the board once with the full dataset.
+		a.board.SetIssues(a.currentIssues, a.boardTitle)
+		a.sprint = a.sprint.SetLoading(false)
 		return a, nil
 
 	case IssueSelectedMsg:
@@ -283,20 +359,34 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case BoardsLoadedMsg:
+		a.err = nil
 		a.home.SetBoards(msg.Boards)
 		a.active = viewHome
 		a.statusMsg = ""
 		return a, nil
 
 	case SearchResultsMsg:
+		a.err = nil
 		a.search.SetResults(msg.Issues, msg.Query)
 		a.active = viewSearch
 		a.statusMsg = ""
+		if msg.HasMore {
+			return a, a.fetchMoreIssues(IssuesPageMsg{
+				Source:    "search",
+				From:      msg.From,
+				JQL:       msg.Query,
+				NextToken: msg.NextToken,
+				Seq:       msg.Seq,
+			})
+		}
 		return a, nil
 
 	case JQLMetadataMsg:
 		a.search.SetMetadata(msg.Meta)
 		a.jqlMetaLoaded = true
+		if msg.Meta != nil && len(msg.Meta.Statuses) > 0 {
+			a.board.SetKnownStatuses(msg.Meta.Statuses)
+		}
 		return a, nil
 
 	case UserSearchMsg:
@@ -370,7 +460,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ErrMsg:
 		a.err = sanitiseError(msg.Err)
-		a.active = viewSprint
 		return a, nil
 
 	case spinner.TickMsg:
@@ -402,6 +491,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Create client and proceed to normal loading.
 			a.client = client.New(cfg)
 			a.needsSetup = false
+			a.previousView = viewSetup
 			a.active = viewLoading
 			return a, tea.Batch(a.spinner.Tick, a.verifyAuth())
 		}
@@ -411,7 +501,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if b := a.home.SelectedBoard(); b != nil {
 			a.boardID = b.ID
 			a.statusMsg = fmt.Sprintf("Loading %s...", b.Name)
+			a.previousView = viewHome
 			a.active = viewLoading
+			a.paginationSeq++
 			return a, tea.Batch(cmd, a.fetchActiveSprintForBoard(b.ID))
 		}
 	case viewSprint:
@@ -482,6 +574,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if q := a.search.SubmittedQuery(); q != "" {
 			a.statusMsg = "Searching..."
+			a.paginationSeq++
 			return a, tea.Batch(cmd, a.searchJQL(q))
 		}
 		if iss := a.search.SelectedIssue(); iss != nil {
@@ -568,7 +661,7 @@ func (a App) View() string {
 	if a.active == viewBoard {
 		extra = append(extra, footerBinding{"e", "filter " + a.board.ParentLabel()})
 	}
-	help := footerView(a.active, a.width, a.version, extra...)
+	help := footerView(a.active, a.width, a.version, a.err != nil, extra...)
 
 	// Show status message above the footer when set.
 	if a.statusMsg != "" && a.active != viewLoading {
@@ -660,7 +753,16 @@ func (a App) navigateBack() (tea.Model, tea.Cmd) {
 	case viewSearch:
 		a.search.BackToInput()
 		return a, nil
-	case viewHome, viewLoading:
+	case viewLoading:
+		// If we came from a content view, go back to it.
+		switch a.previousView {
+		case viewHome, viewSprint, viewBoard:
+			a.active = a.previousView
+			return a, nil
+		}
+		// Initial load or no meaningful previous view — quit.
+		return a, tea.Quit
+	case viewHome:
 		return a, tea.Quit
 	}
 	return a, nil
@@ -678,28 +780,88 @@ func (a App) verifyAuth() tea.Cmd {
 	}
 }
 
-func (a App) fetchActiveSprint() tea.Cmd {
+func (a App) fetchSprintIssues(sprintID int, sprintName string) tea.Cmd {
+	seq := a.paginationSeq
 	return func() tea.Msg {
-		sprint, err := a.client.ActiveSprint()
+		page, err := a.client.SprintIssuesPage(sprintID, 0, client.DefaultPageSize)
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
-		return SprintLoadedMsg{Sprint: sprint}
+
+		// Resolve parents for the first page.
+		parents := a.client.ResolveParents(page.Issues)
+		enriched := client.EnrichWithParents(page.Issues, parents)
+
+		return IssuesLoadedMsg{
+			Issues:     enriched,
+			Title:      sprintName,
+			HasMore:    page.HasMore,
+			Source:     "sprint",
+			From:       len(page.Issues),
+			SprintID:   sprintID,
+			SprintName: sprintName,
+			Seq:        seq,
+		}
 	}
 }
 
-func (a App) fetchSprintIssues(sprintID int, sprintName string) tea.Cmd {
+// pagesPerBatch is how many API pages to fetch before updating the UI.
+// Jira caps each page at 100, so 2 pages ≈ 200 issues per visible update.
+const pagesPerBatch = 2
+
+func (a App) fetchMoreIssues(msg IssuesPageMsg) tea.Cmd {
 	return func() tea.Msg {
-		issues, err := a.client.SprintIssues(sprintID)
-		if err != nil {
-			return ErrMsg{Err: err}
+		var allIssues []jira.Issue
+		from := msg.From
+		nextToken := msg.NextToken
+		hasMore := true
+
+		for range pagesPerBatch {
+			var page *client.PageResult
+			var err error
+
+			switch msg.Source {
+			case "sprint":
+				page, err = a.client.SprintIssuesPage(msg.SprintID, from, client.DefaultPageSize)
+			case "boardapi":
+				page, err = a.client.BoardIssuesPage(msg.SprintID, from, client.DefaultPageSize)
+			case "board", "search":
+				page, err = a.client.SearchJQLPage(msg.JQL, client.DefaultPageSize, from, nextToken)
+			case "epic":
+				page, err = a.client.EpicIssuesPage(msg.EpicKey, from, client.DefaultPageSize)
+			}
+
+			if err != nil {
+				return ErrMsg{Err: err}
+			}
+
+			allIssues = append(allIssues, page.Issues...)
+			from += len(page.Issues)
+			nextToken = page.NextToken
+			hasMore = page.HasMore && from < client.MaxTotalIssues
+
+			if !hasMore || len(page.Issues) == 0 {
+				break
+			}
 		}
 
-		// Resolve parent metadata (single JQL call).
-		parents := a.client.ResolveParents(issues)
-		issues = client.EnrichWithParents(issues, parents)
+		// Resolve parents for the whole batch.
+		parents := a.client.ResolveParents(allIssues)
+		enriched := client.EnrichWithParents(allIssues, parents)
 
-		return IssuesLoadedMsg{Issues: issues, Title: sprintName}
+		return IssuesPageMsg{
+			Issues:     enriched,
+			HasMore:    hasMore,
+			Source:     msg.Source,
+			From:       from,
+			SprintID:   msg.SprintID,
+			SprintName: msg.SprintName,
+			EpicKey:    msg.EpicKey,
+			JQL:        msg.JQL,
+			Project:    msg.Project,
+			NextToken:  nextToken,
+			Seq:        msg.Seq,
+		}
 	}
 }
 
@@ -767,12 +929,20 @@ func (a App) searchUsers(prefix string) tea.Cmd {
 }
 
 func (a App) searchJQL(jql string) tea.Cmd {
+	seq := a.paginationSeq
 	return func() tea.Msg {
-		issues, err := a.client.SearchJQL(jql, 50)
+		page, err := a.client.SearchJQLPage(jql, client.DefaultPageSize, 0, "")
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
-		return SearchResultsMsg{Issues: issues, Query: jql}
+		return SearchResultsMsg{
+			Issues:    page.Issues,
+			Query:     jql,
+			HasMore:   page.HasMore,
+			From:      len(page.Issues),
+			NextToken: page.NextToken,
+			Seq:       seq,
+		}
 	}
 }
 
@@ -897,6 +1067,7 @@ func clipboardBranch(req *branchview.BranchRequest) BranchCreatedMsg {
 }
 
 func (a App) fetchActiveSprintForBoard(boardID int) tea.Cmd {
+	seq := a.paginationSeq
 	return func() tea.Msg {
 		sprints, err := a.client.BoardSprints(boardID, "active")
 		if err == nil && len(sprints) > 0 {
@@ -904,19 +1075,26 @@ func (a App) fetchActiveSprintForBoard(boardID int) tea.Cmd {
 			return SprintLoadedMsg{Sprint: &sprints[0]}
 		}
 
-		// No active sprint — fetch board issues via JQL instead.
-		// This handles kanban boards and scrum boards between sprints.
-		project := a.client.Config().Project
-		issues, err := a.client.BoardIssues(project)
-		if err != nil {
-			return ErrMsg{Err: fmt.Errorf("no active iteration and board issue fetch failed: %w", err)}
+		// No active sprint — fetch board issues via the Agile API directly.
+		// This uses /board/{id}/issue with reliable offset-based pagination,
+		// avoiding the broken /search/jql token pagination and deprecated /search.
+		page, fetchErr := a.client.BoardIssuesPage(boardID, 0, client.DefaultPageSize)
+		if fetchErr != nil {
+			return ErrMsg{Err: fmt.Errorf("no active iteration and board issue fetch failed: %w", fetchErr)}
 		}
 
-		// Resolve parent metadata in same command (single JQL call).
-		parents := a.client.ResolveParents(issues)
-		issues = client.EnrichWithParents(issues, parents)
+		parents := a.client.ResolveParents(page.Issues)
+		enriched := client.EnrichWithParents(page.Issues, parents)
 
-		return IssuesLoadedMsg{Issues: issues, Title: "Board"}
+		return IssuesLoadedMsg{
+			Issues:   enriched,
+			Title:    "Board",
+			HasMore:  page.HasMore,
+			Source:   "boardapi",
+			From:     len(page.Issues),
+			SprintID: boardID, // Carries board ID for pagination.
+			Seq:      seq,
+		}
 	}
 }
 

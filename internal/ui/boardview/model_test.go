@@ -385,3 +385,112 @@ func TestResizeFromLargeToSmall(t *testing.T) {
 		t.Errorf("view height %d exceeds available height 10 after resize", viewHeight)
 	}
 }
+
+func TestAppendIssues_AddsToBoard(t *testing.T) {
+	m := New()
+	m.SetSize(120, 40)
+	m.SetIssues([]jira.Issue{
+		{Key: "A-1", Status: "To Do", Summary: "First"},
+	}, "Board")
+
+	// Append more issues.
+	m.AppendIssues([]jira.Issue{
+		{Key: "A-2", Status: "In Progress", Summary: "Second"},
+		{Key: "A-3", Status: "To Do", Summary: "Third"},
+	})
+
+	if len(m.allIssues) != 3 {
+		t.Errorf("expected 3 issues after append, got %d", len(m.allIssues))
+	}
+
+	// Verify columns were rebuilt — should now have two columns.
+	if len(m.columns) != 2 {
+		t.Errorf("expected 2 columns (To Do + In Progress), got %d", len(m.columns))
+	}
+}
+
+func TestAppendIssues_DeduplicatesByKey(t *testing.T) {
+	m := New()
+	m.SetSize(120, 40)
+	m.SetIssues([]jira.Issue{
+		{Key: "A-1", Status: "To Do", Summary: "First"},
+		{Key: "A-2", Status: "In Progress", Summary: "Second"},
+	}, "Board")
+
+	// Append overlapping page — A-2 already exists.
+	m.AppendIssues([]jira.Issue{
+		{Key: "A-2", Status: "In Progress", Summary: "Second"},
+		{Key: "A-3", Status: "To Do", Summary: "Third"},
+	})
+
+	if len(m.allIssues) != 3 {
+		t.Errorf("expected 3 issues (no duplicates), got %d", len(m.allIssues))
+	}
+
+	// Verify each key appears exactly once across columns.
+	keys := make(map[string]int)
+	for _, col := range m.columns {
+		for _, iss := range col.issues {
+			keys[iss.Key]++
+		}
+	}
+	for key, count := range keys {
+		if count != 1 {
+			t.Errorf("issue %s appears %d times, expected 1", key, count)
+		}
+	}
+}
+
+func TestAppendIssues_PreservesCursorPosition(t *testing.T) {
+	m := New()
+	m.SetSize(120, 40)
+	m.SetIssues([]jira.Issue{
+		{Key: "A-1", Status: "To Do", Summary: "First"},
+		{Key: "A-2", Status: "To Do", Summary: "Second"},
+		{Key: "A-3", Status: "In Progress", Summary: "Third"},
+	}, "Board")
+
+	// Move cursor down in "To Do" column and switch to "In Progress".
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}) // cursor=1 in To Do
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")}) // switch to In Progress
+
+	if m.activeCol != 1 {
+		t.Fatalf("expected activeCol 1, got %d", m.activeCol)
+	}
+	if m.columns[0].cursor != 1 {
+		t.Fatalf("expected To Do cursor 1, got %d", m.columns[0].cursor)
+	}
+
+	// Append new issues — cursor positions should be preserved.
+	m.AppendIssues([]jira.Issue{
+		{Key: "A-4", Status: "To Do", Summary: "Fourth"},
+		{Key: "A-5", Status: "In Progress", Summary: "Fifth"},
+	})
+
+	if m.activeCol != 1 {
+		t.Errorf("expected activeCol 1 after append, got %d", m.activeCol)
+	}
+	if m.columns[0].cursor != 1 {
+		t.Errorf("expected To Do cursor 1 after append, got %d", m.columns[0].cursor)
+	}
+}
+
+func TestAppendIssues_UpdatesParentGroups(t *testing.T) {
+	m := New()
+	m.SetSize(120, 40)
+	m.SetIssues([]jira.Issue{
+		{Key: "A-1", Status: "To Do", ParentKey: "E-1", ParentType: "Epic"},
+	}, "Board")
+
+	if len(m.parentGroups) != 1 {
+		t.Fatalf("expected 1 parent group, got %d", len(m.parentGroups))
+	}
+
+	m.AppendIssues([]jira.Issue{
+		{Key: "A-2", Status: "To Do", ParentKey: "E-2", ParentType: "Epic"},
+	})
+
+	if len(m.parentGroups) != 2 {
+		t.Errorf("expected 2 parent groups after append, got %d", len(m.parentGroups))
+	}
+}

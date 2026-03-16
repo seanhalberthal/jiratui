@@ -8,6 +8,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Progressive pagination — issues load in batches of ~200, showing the first page immediately while remaining pages load in the background
+- Half-page scrolling (`d`/`u`) in sprint list, board, and issue detail views
+- Board view column windowing — shows up to 4 columns at a time, with `[3/10]` position indicator and scrolling via `h`/`l`
+- Colour-coded user names in issue detail view (assignee, reporter, comment authors) — consistent colours per name via hashing
+- Created and Updated timestamps shown in issue detail metadata
+- Board view supports `r` to refresh (previously sprint-only)
+- Board columns ordered by instance-wide status metadata when available (via JQL metadata fetch)
+- JQL metadata fetched eagerly on authentication for faster search and board rendering
+
+### Changed
+
+- Migrated JQL search from deprecated v2 API to v3 `/search/jql` with token-based pagination
+- Sprint, board, epic, and search views now fetch all matching issues (up to 2000) instead of being capped at 200
+- Board fallback (no active sprint) now uses Agile v1 API (`/board/{id}/issue`) instead of JQL search for more reliable pagination
+
+### Fixed
+
+- Duplicate issues no longer appear during progressive pagination across sprint, board, and search views
+- Cursor position preserved during progressive pagination — new pages no longer jump the user back to the top
+- Sprint list filtering no longer disrupted by background pagination pages arriving
+- Search results cursor position preserved when new pages append
+- Board view selected card sometimes partially clipped at bottom edge
+- Kanban board fallback no longer crashes when project key is missing
+
+## [0.1.3] — 2026-03-15
+
+### Added
+
 - Status transitions (`m` from issue/board view) — pick from available transitions to move issues between statuses
 - Add comment (`c` from issue view) — multi-line editor with `ctrl+s` to submit
 

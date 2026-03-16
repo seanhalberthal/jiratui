@@ -22,10 +22,10 @@ type Issue struct {
 	Comments      []Comment
 }
 
-// StatusColumn represents a kanban column derived from issue statuses.
-type StatusColumn struct {
-	Name   string
-	Issues []Issue
+// BoardColumn is unused but reserved for future board configuration support.
+type BoardColumn struct {
+	Name     string
+	Statuses []string
 }
 
 // Comment represents a comment on a Jira issue.

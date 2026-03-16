@@ -89,3 +89,68 @@ func TestView_NonEmpty(t *testing.T) {
 		t.Error("expected non-empty view")
 	}
 }
+
+func TestAppendIssues(t *testing.T) {
+	m := New()
+	m = m.SetSize(80, 24)
+	m = m.SetIssues([]jira.Issue{{Key: "A-1", Summary: "First"}})
+
+	m = m.AppendIssues([]jira.Issue{{Key: "A-2", Summary: "Second"}, {Key: "A-3", Summary: "Third"}})
+
+	if len(m.issues) != 3 {
+		t.Errorf("expected 3 issues after append, got %d", len(m.issues))
+	}
+	if m.issues[2].Key != "A-3" {
+		t.Errorf("expected last issue key 'A-3', got %q", m.issues[2].Key)
+	}
+}
+
+func TestAppendIssues_BuffersDuringFilter(t *testing.T) {
+	m := New()
+	m = m.SetSize(80, 24)
+	m = m.SetIssues([]jira.Issue{{Key: "A-1", Summary: "First"}})
+
+	// Activate list filtering by pressing '/'.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	if !m.Filtering() {
+		t.Fatal("expected filtering to be active after '/'")
+	}
+
+	// Append while filtering — issues should be buffered, not synced to the list.
+	m = m.AppendIssues([]jira.Issue{{Key: "A-2", Summary: "Second"}})
+	if len(m.issues) != 2 {
+		t.Errorf("expected 2 issues in backing slice, got %d", len(m.issues))
+	}
+	if !m.listStale {
+		t.Error("expected listStale to be true during filtering")
+	}
+	// List widget should still have only the original item.
+	if len(m.list.Items()) != 1 {
+		t.Errorf("expected 1 item in list widget during filtering, got %d", len(m.list.Items()))
+	}
+
+	// Cancel the filter by pressing Esc — should flush buffered items.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.listStale {
+		t.Error("expected listStale to be false after filter cleared")
+	}
+	if len(m.list.Items()) != 2 {
+		t.Errorf("expected 2 items in list widget after flush, got %d", len(m.list.Items()))
+	}
+}
+
+func TestSetLoading_ShowsIndicator(t *testing.T) {
+	m := New()
+	m = m.SetSize(80, 24)
+	m = m.SetIssues([]jira.Issue{{Key: "A-1", Summary: "First"}})
+
+	m = m.SetLoading(true)
+	if m.list.Title != "Issues (1) loading..." {
+		t.Errorf("expected loading title, got %q", m.list.Title)
+	}
+
+	m = m.SetLoading(false)
+	if m.list.Title != "Issues (1)" {
+		t.Errorf("expected normal title, got %q", m.list.Title)
+	}
+}

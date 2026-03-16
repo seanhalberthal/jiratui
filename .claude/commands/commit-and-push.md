@@ -49,7 +49,7 @@ description: Commit staged changes and create a PR, push on top if PR already ex
 6. **CHANGELOG Update** (for user-facing changes):
     - **Only required for commits with these prefixes**: `fix:`, `feat:`, `add:`, `update:`, `breaking:`, `remove:`
     - **Skip for**: `refactor:`, `chore:`, `docs:`, `test:`, `ci:`, internal-only changes
-    - **First: tidy existing entries.** Before adding anything new, check `CHANGELOG.md` for entries under `[Unreleased]` that belong to an already-released version. Cross-reference with `git tag --sort=-v:refname` and `git log --oneline` between tags. Move any misplaced entries into their correct `[x.y.z]` section (creating the section if needed)
+    - **First: ALWAYS tidy existing entries.** Before adding anything new, you MUST check `CHANGELOG.md` for entries under `[Unreleased]` that belong to an already-released version. Run `git tag --sort=-v:refname` to get the latest tag, then `git log --oneline <latest-tag>..HEAD` to see what's been committed since. Any `[Unreleased]` entries that describe changes from commits BEFORE the latest tag must be moved down into their correct `[x.y.z]` section (creating the section if needed). Do NOT skip this step — misplaced entries accumulate quickly
     - **Then: add new entry** under `[Unreleased]` using this format:
       ```markdown
       ## [Unreleased]

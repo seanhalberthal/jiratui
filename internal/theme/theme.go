@@ -114,6 +114,34 @@ func StatusStyle(status string) lipgloss.Style {
 	}
 }
 
+// userColours is a palette of distinct, readable colours for user names.
+var userColours = []lipgloss.AdaptiveColor{
+	{Light: "#1e6f5c", Dark: "#73daca"},
+	{Light: "#8b5cf6", Dark: "#bb9af7"},
+	{Light: "#d97706", Dark: "#e0af68"},
+	{Light: "#0891b2", Dark: "#7dcfff"},
+	{Light: "#be185d", Dark: "#f7768e"},
+	{Light: "#4f46e5", Dark: "#7aa2f7"},
+	{Light: "#059669", Dark: "#9ece6a"},
+	{Light: "#9333ea", Dark: "#c49af7"},
+	{Light: "#c2410c", Dark: "#ff9e64"},
+	{Light: "#0d9488", Dark: "#2ac3de"},
+}
+
+// UserStyle returns a consistent colour style for a given name.
+// The same name always produces the same colour via hashing.
+func UserStyle(name string) lipgloss.Style {
+	if name == "" {
+		return StyleSubtle
+	}
+	var h uint32
+	for _, c := range name {
+		h = h*31 + uint32(c)
+	}
+	colour := userColours[h%uint32(len(userColours))]
+	return lipgloss.NewStyle().Foreground(colour)
+}
+
 // StatusCategory returns a sort-friendly category for a status name.
 // Returns 0 for "to do", 1 for "in progress", 2 for "done".
 func StatusCategory(status string) int {
