@@ -46,12 +46,14 @@ func (c *column) moveDown() {
 	}
 }
 
-// cardHeight is the total height of one rendered card:
-// 2 content lines + 2 border lines + 1 MarginBottom = 5 lines.
-const cardHeight = 5
+// cardHeight is the total height of one rendered card.
+// 2 content lines + 2 border lines + 1 MarginBottom = 5 lines baseline,
+// but summaries can wrap, making cards 6–7 lines. Use 6 as the estimate
+// so ensureVisible scrolls conservatively and cards aren't clipped.
+const cardHeight = 6
 
-// headerLines is the height of the column header (rendered text).
-const headerLines = 1
+// headerLines is the height of the column header (text + MarginBottom).
+const headerLines = 2
 
 func (c *column) visibleCards() int {
 	vis := (c.height - headerLines) / cardHeight
@@ -159,6 +161,6 @@ func (c column) view(active bool) string {
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, cards)
 
-	// Fix the column to a consistent height so all columns align.
-	return lipgloss.NewStyle().Height(c.height).MaxHeight(c.height).Render(content)
+	// Fix the column to a consistent width and height so all columns align.
+	return lipgloss.NewStyle().Width(c.width).Height(c.height).MaxHeight(c.height).Render(content)
 }

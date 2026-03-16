@@ -14,12 +14,13 @@ import (
 
 // Model is the sprint issue list view.
 type Model struct {
-	list     list.Model
-	issues   []jira.Issue
-	width    int
-	height   int
-	selected *jira.Issue // set when user presses enter.
-	openKeys key.Binding
+	list      list.Model
+	issues    []jira.Issue
+	listStale bool // True when issues have been updated but not synced to the list widget (e.g. during filtering).
+	width     int
+	height    int
+	selected  *jira.Issue // set when user presses enter.
+	openKeys  key.Binding
 }
 
 // New creates a new sprint view model.
@@ -57,8 +58,28 @@ func (m Model) SetIssues(issues []jira.Issue) Model {
 }
 
 // AppendIssues adds more issues to the existing list (for progressive pagination).
+// Deduplicates by issue key to handle overlapping API pages.
+// When a filter is active, items are buffered to avoid disrupting the user's
+// filtering interaction — they are flushed when the filter is cleared.
 func (m Model) AppendIssues(issues []jira.Issue) Model {
-	m.issues = append(m.issues, issues...)
+	seen := make(map[string]bool, len(m.issues))
+	for _, iss := range m.issues {
+		seen[iss.Key] = true
+	}
+	for _, iss := range issues {
+		if !seen[iss.Key] {
+			m.issues = append(m.issues, iss)
+			seen[iss.Key] = true
+		}
+	}
+
+	if m.list.FilterState() != list.Unfiltered {
+		// Don't call SetItems while the user is filtering — just mark as stale.
+		m.listStale = true
+		m.list.Title = fmt.Sprintf("Issues (%d) loading...", len(m.issues))
+		return m
+	}
+
 	items := issuedelegate.ToItems(m.issues)
 	m.list.SetItems(items)
 	m.list.Title = fmt.Sprintf("Issues (%d)", len(m.issues))
@@ -116,6 +137,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
+
+	// Flush buffered items once the user clears the filter.
+	if m.listStale && m.list.FilterState() == list.Unfiltered {
+		m.listStale = false
+		items := issuedelegate.ToItems(m.issues)
+		m.list.SetItems(items)
+		m.list.Title = fmt.Sprintf("Issues (%d)", len(m.issues))
+	}
+
 	return m, cmd
 }
 

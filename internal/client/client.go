@@ -43,7 +43,8 @@ type JiraClient interface {
 	BoardIssues(project string, statuses ...string) ([]jira.Issue, error)
 	EpicIssues(epicKey string) ([]jira.Issue, error)
 	SprintIssuesPage(sprintID, from, pageSize int) (*PageResult, error)
-	SearchJQLPage(jql string, pageSize int, nextToken string) (*PageResult, error)
+	SearchJQLPage(jql string, pageSize int, from int, nextToken string) (*PageResult, error)
+	BoardIssuesPage(boardID, from, pageSize int) (*PageResult, error)
 	EpicIssuesPage(epicKey string, from, pageSize int) (*PageResult, error)
 	Projects() ([]jira.Project, error)
 	JQLMetadata() (*jira.JQLMetadata, error)
@@ -206,8 +207,10 @@ func (c *Client) BoardSprints(boardID int, state string) ([]jira.Sprint, error) 
 }
 
 // SearchJQLPage executes a JQL query and returns a single page of results.
-// Uses the v3 /search/jql API with token-based pagination.
-func (c *Client) SearchJQLPage(jql string, pageSize int, nextToken string) (*PageResult, error) {
+// Uses the v3 /search/jql API. Note: token-based pagination on this endpoint
+// is unreliable on many Jira Cloud instances — prefer BoardIssuesPage for
+// board-level issue fetching.
+func (c *Client) SearchJQLPage(jql string, pageSize int, from int, nextToken string) (*PageResult, error) {
 	path := fmt.Sprintf("/search/jql?jql=%s&maxResults=%d&fields=*all",
 		url.QueryEscape(jql), pageSize)
 	if nextToken != "" {
@@ -243,6 +246,40 @@ func (c *Client) SearchJQLPage(jql string, pageSize int, nextToken string) (*Pag
 	}, nil
 }
 
+// BoardIssuesPage fetches a single page of issues for a board using the
+// Agile v1 API with reliable offset-based pagination.
+func (c *Client) BoardIssuesPage(boardID, from, pageSize int) (*PageResult, error) {
+	path := fmt.Sprintf("/board/%d/issue?startAt=%d&maxResults=%d", boardID, from, pageSize)
+
+	res, err := c.inner.GetV1(context.Background(), path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch board issues: %w", err)
+	}
+	if res == nil {
+		return nil, fmt.Errorf("empty response from board issues")
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("board issues failed with status %d", res.StatusCode)
+	}
+
+	var searchRes jiracli.SearchResult
+	if err := json.NewDecoder(res.Body).Decode(&searchRes); err != nil {
+		return nil, err
+	}
+
+	issues := make([]jira.Issue, 0, len(searchRes.Issues))
+	for _, iss := range searchRes.Issues {
+		issues = append(issues, convertIssue(iss))
+	}
+	return &PageResult{
+		Issues:  issues,
+		HasMore: len(searchRes.Issues) > 0,
+		From:    from,
+	}, nil
+}
+
 // SearchJQL executes a JQL query and returns all matching issues (all pages).
 func (c *Client) SearchJQL(jql string, limit uint) ([]jira.Issue, error) {
 	var all []jira.Issue
@@ -256,7 +293,7 @@ func (c *Client) SearchJQL(jql string, limit uint) ([]jira.Issue, error) {
 	}
 	nextToken := ""
 	for {
-		page, err := c.SearchJQLPage(jql, pageSize, nextToken)
+		page, err := c.SearchJQLPage(jql, pageSize, len(all), nextToken)
 		if err != nil {
 			return nil, err
 		}
@@ -716,6 +753,14 @@ func convertIssue(iss *jiracli.Issue) jira.Issue {
 		Reporter:  iss.Fields.Reporter.Name,
 		Labels:    iss.Fields.Labels,
 		IssueType: iss.Fields.IssueType.Name,
+	}
+
+	// Parse timestamps.
+	if t, err := time.Parse("2006-01-02T15:04:05.000-0700", iss.Fields.Created); err == nil {
+		i.Created = t
+	}
+	if t, err := time.Parse("2006-01-02T15:04:05.000-0700", iss.Fields.Updated); err == nil {
+		i.Updated = t
 	}
 
 	// Extract parent key (epic for stories, story for subtasks).

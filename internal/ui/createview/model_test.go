@@ -55,9 +55,10 @@ func (s *stubClient) Transitions(_ string) ([]jira.Transition, error)          {
 func (s *stubClient) TransitionIssue(_, _ string) error                        { return nil }
 func (s *stubClient) AddComment(_, _ string) error                             { return nil }
 func (s *stubClient) SprintIssuesPage(_, _, _ int) (*client.PageResult, error) { return nil, nil }
-func (s *stubClient) SearchJQLPage(_ string, _ int, _ string) (*client.PageResult, error) {
+func (s *stubClient) SearchJQLPage(_ string, _ int, _ int, _ string) (*client.PageResult, error) {
 	return nil, nil
 }
+func (s *stubClient) BoardIssuesPage(_, _, _ int) (*client.PageResult, error)       { return nil, nil }
 func (s *stubClient) EpicIssuesPage(_ string, _, _ int) (*client.PageResult, error) { return nil, nil }
 
 func defaultStub() *stubClient {

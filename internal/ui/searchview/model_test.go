@@ -623,6 +623,37 @@ func TestModel_BackToInput_NoopFromInput(t *testing.T) {
 	}
 }
 
+func TestAppendResults_PreservesCursorPosition(t *testing.T) {
+	m := New()
+	m.Show()
+	m.SetSize(80, 24)
+
+	m.SetResults([]jira.Issue{
+		{Key: "A-1", Summary: "First", Status: "To Do", IssueType: "Story"},
+		{Key: "A-2", Summary: "Second", Status: "To Do", IssueType: "Story"},
+		{Key: "A-3", Summary: "Third", Status: "To Do", IssueType: "Story"},
+	}, "test query")
+
+	// Move cursor to the second item.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	idx := m.results.Index()
+	if idx != 1 {
+		t.Fatalf("expected cursor at index 1, got %d", idx)
+	}
+
+	// Append more results — cursor should stay at index 1.
+	m.AppendResults([]jira.Issue{
+		{Key: "A-4", Summary: "Fourth", Status: "To Do", IssueType: "Story"},
+	})
+
+	if m.results.Index() != 1 {
+		t.Errorf("expected cursor still at index 1 after append, got %d", m.results.Index())
+	}
+	if len(m.results.Items()) != 4 {
+		t.Errorf("expected 4 results after append, got %d", len(m.results.Items()))
+	}
+}
+
 func TestAppendResults_MergesWithExisting(t *testing.T) {
 	m := New()
 	m.Show()

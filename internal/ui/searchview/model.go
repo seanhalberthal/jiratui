@@ -109,11 +109,14 @@ func (m *Model) SetResults(issues []jira.Issue, query string) {
 }
 
 // AppendResults adds more search results to the existing list.
+// Preserves the user's cursor position so new pages don't disrupt browsing.
 func (m *Model) AppendResults(issues []jira.Issue) {
 	existingItems := m.results.Items()
+	idx := m.results.Index() // Save cursor position before SetItems resets it.
 	newItems := issuedelegate.ToItems(issues)
 	allItems := append(existingItems, newItems...)
 	m.results.SetItems(allItems)
+	m.results.Select(idx) // Restore cursor position — new items are appended at the end.
 	m.results.Title = fmt.Sprintf("Results for: %s (%d)", m.query, len(allItems))
 }
 

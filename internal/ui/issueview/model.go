@@ -146,8 +146,14 @@ func (m Model) renderContent() string {
 
 	writeField("Type", iss.IssueType)
 	writeField("Priority", iss.Priority)
-	writeField("Assignee", iss.Assignee)
-	writeField("Reporter", iss.Reporter)
+	writeField("Assignee", theme.UserStyle(iss.Assignee).Render(iss.Assignee))
+	writeField("Reporter", theme.UserStyle(iss.Reporter).Render(iss.Reporter))
+	if !iss.Created.IsZero() {
+		writeField("Created", iss.Created.Local().Format("2 Jan 2006 15:04"))
+	}
+	if !iss.Updated.IsZero() {
+		writeField("Updated", iss.Updated.Local().Format("2 Jan 2006 15:04"))
+	}
 
 	if len(iss.Labels) > 0 {
 		writeField("Labels", strings.Join(iss.Labels, ", "))
@@ -179,7 +185,7 @@ func (m Model) renderContent() string {
 		}
 		for _, c := range iss.Comments[start:] {
 			b.WriteString("\n")
-			author := theme.StyleKey.Render(c.Author)
+			author := theme.UserStyle(c.Author).Bold(true).Render(c.Author)
 			fmt.Fprintf(&b, "%s\n", author)
 			body := markup.Render(c.Body, m.width-4)
 			b.WriteString(body)

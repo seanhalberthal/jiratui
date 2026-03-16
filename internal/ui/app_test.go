@@ -121,7 +121,7 @@ func (s *stubClient) SprintIssuesPage(_ int, from, pageSize int) (*client.PageRe
 		From:    from,
 	}, nil
 }
-func (s *stubClient) SearchJQLPage(_ string, pageSize int, _ string) (*client.PageResult, error) {
+func (s *stubClient) SearchJQLPage(_ string, pageSize int, _ int, _ string) (*client.PageResult, error) {
 	if s.searchErr != nil {
 		return nil, s.searchErr
 	}
@@ -134,6 +134,21 @@ func (s *stubClient) SearchJQLPage(_ string, pageSize int, _ string) (*client.Pa
 		Issues:  issues,
 		HasMore: false,
 	}, nil
+}
+func (s *stubClient) BoardIssuesPage(_ int, from, pageSize int) (*client.PageResult, error) {
+	// Reuse searchIssues for board issues fallback tests.
+	issues := s.searchIssues
+	if s.searchErr != nil {
+		return nil, s.searchErr
+	}
+	if from >= len(issues) {
+		return &client.PageResult{Issues: nil, HasMore: false, From: from}, nil
+	}
+	end := from + pageSize
+	if end > len(issues) {
+		end = len(issues)
+	}
+	return &client.PageResult{Issues: issues[from:end], HasMore: end < len(issues), From: from}, nil
 }
 func (s *stubClient) EpicIssuesPage(_ string, from, pageSize int) (*client.PageResult, error) {
 	if s.epicIssErr != nil {
@@ -338,14 +353,26 @@ func TestApp_ClientReadyMsg_DirectIssue_FetchesDetail(t *testing.T) {
 		t.Fatal("expected non-nil cmd (fetchIssueDetail)")
 	}
 
-	// Execute the command — should return IssueDetailMsg.
+	// Execute the batch command — one of the results should be IssueDetailMsg.
 	msg := cmd()
-	detail, ok := msg.(IssueDetailMsg)
+	batch, ok := msg.(tea.BatchMsg)
 	if !ok {
-		t.Fatalf("expected IssueDetailMsg, got %T", msg)
+		t.Fatalf("expected tea.BatchMsg, got %T", msg)
 	}
-	if detail.Issue.Key != "PROJ-1" {
-		t.Errorf("expected PROJ-1, got %s", detail.Issue.Key)
+	var found bool
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		if detail, ok := c().(IssueDetailMsg); ok {
+			if detail.Issue.Key != "PROJ-1" {
+				t.Errorf("expected PROJ-1, got %s", detail.Issue.Key)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected IssueDetailMsg in batch")
 	}
 }
 

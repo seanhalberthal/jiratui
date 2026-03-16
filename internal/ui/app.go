@@ -28,7 +28,6 @@ import (
 	"github.com/seanhalberthal/jiru/internal/ui/setupview"
 	"github.com/seanhalberthal/jiru/internal/ui/sprintview"
 	"github.com/seanhalberthal/jiru/internal/ui/transitionview"
-	"github.com/seanhalberthal/jiru/internal/validate"
 )
 
 // view represents which pane is currently active.
@@ -258,8 +257,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.active = viewComment
 				return a, nil
 			}
-		case key.Matches(msg, a.keys.Refresh) && a.active == viewSprint:
-			a.previousView = viewSprint
+		case key.Matches(msg, a.keys.Refresh) && (a.active == viewSprint || a.active == viewBoard):
+			a.previousView = a.active
 			a.active = viewLoading
 			a.statusMsg = "Refreshing..."
 			a.paginationSeq++
@@ -269,15 +268,21 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ClientReadyMsg:
 		a.err = nil
 		a.statusMsg = fmt.Sprintf("Authenticated as %s", msg.DisplayName)
+		// Fetch JQL metadata (statuses, types, etc.) eagerly — used by
+		// both search autocomplete and the board view column layout.
+		var metaCmd tea.Cmd
+		if !a.jqlMetaLoaded {
+			metaCmd = a.fetchJQLMetadata()
+		}
 		if a.directIssue != "" {
-			return a, a.fetchIssueDetail(a.directIssue)
+			return a, tea.Batch(a.fetchIssueDetail(a.directIssue), metaCmd)
 		}
 		if a.client.Config().BoardID != 0 {
 			a.boardID = a.client.Config().BoardID
 			a.paginationSeq++
-			return a, a.fetchActiveSprintForBoard(a.boardID)
+			return a, tea.Batch(a.fetchActiveSprintForBoard(a.boardID), metaCmd)
 		}
-		return a, a.fetchBoards()
+		return a, tea.Batch(a.fetchBoards(), metaCmd)
 
 	case SprintLoadedMsg:
 		a.err = nil
@@ -287,7 +292,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case IssuesLoadedMsg:
 		a.err = nil
-		a.active = viewSprint
+		if a.previousView == viewBoard {
+			a.active = viewBoard
+		} else {
+			a.active = viewSprint
+		}
 		a.currentIssues = msg.Issues
 		a.boardTitle = msg.Title
 		a.sprint = a.sprint.SetIssues(msg.Issues)
@@ -305,6 +314,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Seq:        msg.Seq,
 			})
 		}
+		// Single page — populate board immediately.
+		a.board.SetIssues(msg.Issues, msg.Title)
 		return a, nil
 
 	case IssuesPageMsg:
@@ -315,13 +326,23 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "search":
 			a.search.AppendResults(msg.Issues)
 		default:
-			a.currentIssues = append(a.currentIssues, msg.Issues...)
+			// Dedup — Jira's offset-based pagination can return overlapping results.
+			seen := make(map[string]bool, len(a.currentIssues))
+			for _, iss := range a.currentIssues {
+				seen[iss.Key] = true
+			}
+			for _, iss := range msg.Issues {
+				if !seen[iss.Key] {
+					a.currentIssues = append(a.currentIssues, iss)
+				}
+			}
 			a.sprint = a.sprint.AppendIssues(msg.Issues)
-			a.board.AppendIssues(msg.Issues)
 		}
 		if msg.HasMore {
 			return a, a.fetchMoreIssues(msg)
 		}
+		// All pages loaded — populate the board once with the full dataset.
+		a.board.SetIssues(a.currentIssues, a.boardTitle)
 		a.sprint = a.sprint.SetLoading(false)
 		return a, nil
 
@@ -363,6 +384,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case JQLMetadataMsg:
 		a.search.SetMetadata(msg.Meta)
 		a.jqlMetaLoaded = true
+		if msg.Meta != nil && len(msg.Meta.Statuses) > 0 {
+			a.board.SetKnownStatuses(msg.Meta.Statuses)
+		}
 		return a, nil
 
 	case UserSearchMsg:
@@ -799,8 +823,10 @@ func (a App) fetchMoreIssues(msg IssuesPageMsg) tea.Cmd {
 			switch msg.Source {
 			case "sprint":
 				page, err = a.client.SprintIssuesPage(msg.SprintID, from, client.DefaultPageSize)
+			case "boardapi":
+				page, err = a.client.BoardIssuesPage(msg.SprintID, from, client.DefaultPageSize)
 			case "board", "search":
-				page, err = a.client.SearchJQLPage(msg.JQL, client.DefaultPageSize, nextToken)
+				page, err = a.client.SearchJQLPage(msg.JQL, client.DefaultPageSize, from, nextToken)
 			case "epic":
 				page, err = a.client.EpicIssuesPage(msg.EpicKey, from, client.DefaultPageSize)
 			}
@@ -905,7 +931,7 @@ func (a App) searchUsers(prefix string) tea.Cmd {
 func (a App) searchJQL(jql string) tea.Cmd {
 	seq := a.paginationSeq
 	return func() tea.Msg {
-		page, err := a.client.SearchJQLPage(jql, client.DefaultPageSize, "")
+		page, err := a.client.SearchJQLPage(jql, client.DefaultPageSize, 0, "")
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
@@ -1049,18 +1075,10 @@ func (a App) fetchActiveSprintForBoard(boardID int) tea.Cmd {
 			return SprintLoadedMsg{Sprint: &sprints[0]}
 		}
 
-		// No active sprint — fetch board issues via JQL with progressive pagination.
-		project := a.client.Config().Project
-		if err := validate.ProjectKey(project); err != nil {
-			return ErrMsg{Err: fmt.Errorf("no active iteration and invalid project key: %w", err)}
-		}
-		escapedProject := jqlEscape(project)
-		jql := fmt.Sprintf(
-			"project = '%s' AND statusCategory != Done ORDER BY status ASC, updated DESC",
-			escapedProject,
-		)
-
-		page, fetchErr := a.client.SearchJQLPage(jql, client.DefaultPageSize, "")
+		// No active sprint — fetch board issues via the Agile API directly.
+		// This uses /board/{id}/issue with reliable offset-based pagination,
+		// avoiding the broken /search/jql token pagination and deprecated /search.
+		page, fetchErr := a.client.BoardIssuesPage(boardID, 0, client.DefaultPageSize)
 		if fetchErr != nil {
 			return ErrMsg{Err: fmt.Errorf("no active iteration and board issue fetch failed: %w", fetchErr)}
 		}
@@ -1069,15 +1087,13 @@ func (a App) fetchActiveSprintForBoard(boardID int) tea.Cmd {
 		enriched := client.EnrichWithParents(page.Issues, parents)
 
 		return IssuesLoadedMsg{
-			Issues:    enriched,
-			Title:     "Board",
-			HasMore:   page.HasMore,
-			Source:    "board",
-			From:      len(page.Issues),
-			JQL:       jql,
-			NextToken: page.NextToken,
-			Project:   project,
-			Seq:       seq,
+			Issues:   enriched,
+			Title:    "Board",
+			HasMore:  page.HasMore,
+			Source:   "boardapi",
+			From:     len(page.Issues),
+			SprintID: boardID, // Carries board ID for pagination.
+			Seq:      seq,
 		}
 	}
 }
@@ -1096,11 +1112,6 @@ func cycleParentFilter(groups []boardview.ParentGroup, current string) string {
 		}
 	}
 	return ""
-}
-
-// jqlEscape escapes single quotes in JQL string literals.
-func jqlEscape(s string) string {
-	return strings.ReplaceAll(s, `'`, `\'`)
 }
 
 var urlPattern = regexp.MustCompile(`https?://\S+`)

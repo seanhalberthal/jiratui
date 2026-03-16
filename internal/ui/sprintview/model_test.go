@@ -105,6 +105,40 @@ func TestAppendIssues(t *testing.T) {
 	}
 }
 
+func TestAppendIssues_BuffersDuringFilter(t *testing.T) {
+	m := New()
+	m = m.SetSize(80, 24)
+	m = m.SetIssues([]jira.Issue{{Key: "A-1", Summary: "First"}})
+
+	// Activate list filtering by pressing '/'.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	if !m.Filtering() {
+		t.Fatal("expected filtering to be active after '/'")
+	}
+
+	// Append while filtering — issues should be buffered, not synced to the list.
+	m = m.AppendIssues([]jira.Issue{{Key: "A-2", Summary: "Second"}})
+	if len(m.issues) != 2 {
+		t.Errorf("expected 2 issues in backing slice, got %d", len(m.issues))
+	}
+	if !m.listStale {
+		t.Error("expected listStale to be true during filtering")
+	}
+	// List widget should still have only the original item.
+	if len(m.list.Items()) != 1 {
+		t.Errorf("expected 1 item in list widget during filtering, got %d", len(m.list.Items()))
+	}
+
+	// Cancel the filter by pressing Esc — should flush buffered items.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.listStale {
+		t.Error("expected listStale to be false after filter cleared")
+	}
+	if len(m.list.Items()) != 2 {
+		t.Errorf("expected 2 items in list widget after flush, got %d", len(m.list.Items()))
+	}
+}
+
 func TestSetLoading_ShowsIndicator(t *testing.T) {
 	m := New()
 	m = m.SetSize(80, 24)
