@@ -31,8 +31,9 @@ jobs:
     steps:
       - name: Check for skip patterns
         id: skip_check
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
           if echo "$COMMIT_MSG" | grep -qiE '\[(skip ci|ci skip|no ci)\]'; then
             echo "should_skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -56,8 +57,10 @@ jobs:
 
       - name: Determine version bump
         id: version
+        env:
+          COMMIT_MSG_FULL: ${{ github.event.head_commit.message }}
         run: |
-          COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | head -1)
+          COMMIT_MSG=$(echo "$COMMIT_MSG_FULL" | head -1)
 
           if echo "$COMMIT_MSG" | grep -qiE '^breaking:'; then
             BUMP_TYPE="major"
