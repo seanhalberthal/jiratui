@@ -114,12 +114,30 @@ func TestStatusStyle_Categories(t *testing.T) {
 		}
 	}
 
-	// In Progress statuses should use StyleStatusInProgress.
+	// In Progress statuses should be bold and use a colour from the in-progress palette.
 	for _, s := range []string{"In Progress", "In Review"} {
 		got := StatusStyle(s)
-		if got.GetForeground() != StyleStatusInProgress.GetForeground() {
-			t.Errorf("StatusStyle(%q) should match StyleStatusInProgress", s)
+		if !got.GetBold() {
+			t.Errorf("StatusStyle(%q) should be bold", s)
 		}
+		fg := got.GetForeground()
+		found := false
+		for _, c := range statusInProgressColours {
+			if fg == c {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("StatusStyle(%q) foreground not in in-progress palette", s)
+		}
+	}
+
+	// Different in-progress statuses should get different colours.
+	s1 := StatusStyle("In Progress").GetForeground()
+	s2 := StatusStyle("In Review").GetForeground()
+	if s1 == s2 {
+		t.Error("In Progress and In Review should have different colours")
 	}
 
 	// Cancelled statuses should use StyleStatusCancelled.
@@ -146,7 +164,7 @@ func TestSetStatusCategoryMap(t *testing.T) {
 		status     string
 		wantCat    int
 		wantDone   bool // should use StyleStatusDone?
-		wantProg   bool // should use StyleStatusInProgress?
+		wantProg   bool // should use in-progress palette?
 		wantCancel bool // should use StyleStatusCancelled?
 	}{
 		{"Completed", 2, true, false, false},
@@ -172,8 +190,18 @@ func TestSetStatusCategoryMap(t *testing.T) {
 			if tt.wantDone && style.GetForeground() != StyleStatusDone.GetForeground() {
 				t.Errorf("StatusStyle(%q) should match StyleStatusDone", tt.status)
 			}
-			if tt.wantProg && style.GetForeground() != StyleStatusInProgress.GetForeground() {
-				t.Errorf("StatusStyle(%q) should match StyleStatusInProgress", tt.status)
+			if tt.wantProg {
+				fg := style.GetForeground()
+				found := false
+				for _, c := range statusInProgressColours {
+					if fg == c {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("StatusStyle(%q) foreground not in in-progress palette", tt.status)
+				}
 			}
 			if tt.wantCancel && style.GetForeground() != StyleStatusCancelled.GetForeground() {
 				t.Errorf("StatusStyle(%q) should match StyleStatusCancelled", tt.status)

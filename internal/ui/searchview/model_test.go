@@ -721,3 +721,68 @@ func TestTabAcceptsThroughAppPattern(t *testing.T) {
 		t.Errorf("after Tab via app pattern: got %q, want %q", got, "status")
 	}
 }
+
+func TestSetFilterName_ShowsInTitle(t *testing.T) {
+	m := New()
+	m.Show()
+	m.SetSize(120, 24)
+
+	m.SetFilterName("My Bugs")
+	issues := []jira.Issue{
+		{Key: "PROJ-1", Summary: "Bug", Status: "Open", IssueType: "Bug"},
+		{Key: "PROJ-2", Summary: "Bug 2", Status: "Open", IssueType: "Bug"},
+	}
+	m.SetResults(issues, "type = Bug AND assignee = currentUser()")
+
+	view := m.View()
+	if !strings.Contains(view, "Filter: My Bugs") {
+		t.Errorf("expected 'Filter: My Bugs' in title, got:\n%s", view)
+	}
+	if strings.Contains(view, "Results for:") {
+		t.Error("expected 'Results for:' prefix to be replaced by 'Filter:'")
+	}
+}
+
+func TestSetFilterName_ClearedOnManualSearch(t *testing.T) {
+	m := New()
+	m.Show()
+	m.SetSize(120, 24)
+
+	// Set a filter context.
+	m.SetFilterName("My Filter")
+
+	// User types a new query and presses enter — should clear the filter name.
+	m.input.SetValue("project = PROJ")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	q := m.SubmittedQuery()
+	if q != "project = PROJ" {
+		t.Errorf("expected submitted query, got %q", q)
+	}
+
+	// Now set results — title should show "Results for:" not "Filter:".
+	m.SetResults(nil, "project = PROJ")
+	view := m.View()
+	if strings.Contains(view, "Filter:") {
+		t.Error("expected filter name cleared after manual search")
+	}
+	if !strings.Contains(view, "Results for:") {
+		t.Error("expected 'Results for:' prefix after manual search")
+	}
+}
+
+func TestSetFilterName_Empty_UsesDefault(t *testing.T) {
+	m := New()
+	m.Show()
+	m.SetSize(120, 24)
+
+	m.SetFilterName("") // Explicitly empty.
+	m.SetResults([]jira.Issue{
+		{Key: "PROJ-1", Summary: "Test", Status: "Open", IssueType: "Task"},
+	}, "status = Open")
+
+	view := m.View()
+	if !strings.Contains(view, "Results for:") {
+		t.Error("expected default 'Results for:' when filter name is empty")
+	}
+}

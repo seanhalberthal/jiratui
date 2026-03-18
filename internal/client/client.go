@@ -56,6 +56,20 @@ type JiraClient interface {
 	TransitionIssue(key, transitionID string) error
 	AddComment(key, body string) error
 	ChildIssues(key string) ([]jira.ChildIssue, error)
+	AssignIssue(key, accountID string) error
+	EditIssue(key string, req *EditIssueRequest) error
+	LinkIssue(inwardKey, outwardKey, linkType string) error
+	GetIssueLinkTypes() ([]jira.IssueLinkType, error)
+	DeleteIssue(key string, cascade bool) error
+}
+
+// EditIssueRequest holds the fields for editing an existing issue.
+// Empty fields are not sent to the API.
+type EditIssueRequest struct {
+	Summary     string   // empty = no change
+	Description string   // empty = no change
+	Priority    string   // empty = no change
+	Labels      []string // "-label" removes, "label" adds; nil = no change
 }
 
 // CreateIssueRequest holds the fields needed to create a Jira issue.
@@ -900,6 +914,68 @@ func (c *Client) ChildIssues(key string) ([]jira.ChildIssue, error) {
 		})
 	}
 	return children, nil
+}
+
+// AssignIssue assigns an issue to a user by account ID.
+// Pass "none" to unassign, "default" for the default assignee.
+func (c *Client) AssignIssue(key, accountID string) error {
+	err := c.inner.AssignIssueV2(key, accountID)
+	if err != nil {
+		return fmt.Errorf("failed to assign %s: %w", key, err)
+	}
+	return nil
+}
+
+// EditIssue updates fields on an existing issue.
+// Only non-empty fields in the request are sent.
+func (c *Client) EditIssue(key string, req *EditIssueRequest) error {
+	cr := &jiracli.EditRequest{
+		Summary:  req.Summary,
+		Body:     req.Description,
+		Priority: req.Priority,
+		Labels:   req.Labels,
+	}
+	err := c.inner.Edit(key, cr)
+	if err != nil {
+		return fmt.Errorf("failed to edit %s: %w", key, err)
+	}
+	return nil
+}
+
+// LinkIssue creates a link between two issues.
+func (c *Client) LinkIssue(inwardKey, outwardKey, linkType string) error {
+	err := c.inner.LinkIssue(inwardKey, outwardKey, linkType)
+	if err != nil {
+		return fmt.Errorf("failed to link %s → %s: %w", inwardKey, outwardKey, err)
+	}
+	return nil
+}
+
+// GetIssueLinkTypes returns all available issue link types.
+func (c *Client) GetIssueLinkTypes() ([]jira.IssueLinkType, error) {
+	raw, err := c.inner.GetIssueLinkTypes()
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch link types: %w", err)
+	}
+	types := make([]jira.IssueLinkType, 0, len(raw))
+	for _, t := range raw {
+		types = append(types, jira.IssueLinkType{
+			ID:      t.ID,
+			Name:    t.Name,
+			Inward:  t.Inward,
+			Outward: t.Outward,
+		})
+	}
+	return types, nil
+}
+
+// DeleteIssue deletes an issue. If cascade is true, subtasks are also deleted.
+func (c *Client) DeleteIssue(key string, cascade bool) error {
+	err := c.inner.DeleteIssue(key, cascade)
+	if err != nil {
+		return fmt.Errorf("failed to delete %s: %w", key, err)
+	}
+	return nil
 }
 
 // AddComment posts a comment on an issue.

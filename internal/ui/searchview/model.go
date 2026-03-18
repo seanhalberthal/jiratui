@@ -49,6 +49,7 @@ type Model struct {
 	userPending bool   // Whether a user search is in flight.
 
 	pendingSave string // Non-empty when user pressed 's' on results to save current query.
+	filterName  string // When results are from a saved filter, show the filter name in the title.
 }
 
 func New() Model {
@@ -114,13 +115,55 @@ func (m *Model) SetSize(width, height int) {
 	m.height = height
 	m.input.Width = width - 4
 	m.results.SetSize(width, height-4)
+	// Re-truncate title if query is set.
+	if m.query != "" {
+		m.updateTitle(len(m.results.Items()))
+	}
 }
 
 func (m *Model) SetResults(issues []jira.Issue, query string) {
 	m.query = query
 	m.results.SetItems(issuedelegate.ToItems(issues))
-	m.results.Title = fmt.Sprintf("Results for: %s (%d)", query, len(issues))
+	m.updateTitle(len(issues))
 	m.state = stateResults
+}
+
+// SetFilterName sets the name of the saved filter whose results are being shown.
+// Pass "" to clear it (e.g., for ad-hoc JQL searches).
+func (m *Model) SetFilterName(name string) {
+	m.filterName = name
+}
+
+// updateTitle sets the results title, truncating the query if needed.
+func (m *Model) updateTitle(count int) {
+	suffix := fmt.Sprintf(" (%d)", count)
+	var prefix, display string
+	if m.filterName != "" {
+		prefix = "Filter: "
+		display = m.filterName
+	} else {
+		prefix = "Results for: "
+		display = m.query
+	}
+	maxLen := m.width - len(prefix) - len(suffix) - 4 // padding
+	if maxLen > 3 && len(display) > maxLen {
+		display = display[:maxLen-3] + "..."
+	}
+	m.results.Title = fmt.Sprintf("%s%s%s", prefix, display, suffix)
+}
+
+// UpdateIssueStatus updates the status of an issue in the search results.
+// Used to keep results in sync after a status transition.
+func (m *Model) UpdateIssueStatus(key, newStatus string) {
+	items := m.results.Items()
+	for i, item := range items {
+		if it, ok := item.(issuedelegate.Item); ok && it.Key() == key {
+			items[i] = it.WithStatus(newStatus)
+		}
+	}
+	idx := m.results.Index()
+	m.results.SetItems(items)
+	m.results.Select(idx)
 }
 
 // AppendResults adds more search results to the existing list.
@@ -157,6 +200,16 @@ func (m Model) InputActive() bool {
 		return true
 	}
 	return false
+}
+
+// ResultsFiltered returns true when the results list has a filter applied (but input is not active).
+func (m Model) ResultsFiltered() bool {
+	return m.state == stateResults && m.results.FilterState() == list.FilterApplied
+}
+
+// ResetResultsFilter clears the applied filter on the results list.
+func (m *Model) ResetResultsFilter() {
+	m.results.ResetFilter()
 }
 
 // BackToInput returns from results to the JQL input.
@@ -288,6 +341,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 				q := m.input.Value()
 				if q != "" {
+					m.filterName = "" // Clear filter context — this is an ad-hoc search.
 					m.pendingQuery = q
 					m.query = q
 				}
@@ -296,6 +350,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		case stateResults:
 			if key.Matches(keyMsg, m.closeKeys) {
+				// If list filter is active, let bubbles/list handle esc to clear it
+				// rather than jumping back to JQL input.
+				if m.results.FilterState() != list.Unfiltered {
+					break
+				}
 				m.state = stateInput
 				m.input.Focus()
 				return m, nil

@@ -139,6 +139,48 @@ type CommentAddedMsg struct {
 	Err error
 }
 
+// IssueAssignedMsg is sent after an issue assignment completes.
+type IssueAssignedMsg struct {
+	Key      string
+	Assignee string // display name for status msg
+	Err      error
+}
+
+// AssignUserSearchMsg carries user search results for the assign view.
+type AssignUserSearchMsg struct {
+	Users []client.UserInfo
+}
+
+// IssueEditedMsg is sent after an issue edit completes.
+type IssueEditedMsg struct {
+	Key string
+	Err error
+}
+
+// LinkTypesLoadedMsg carries available issue link types.
+type LinkTypesLoadedMsg struct {
+	Types []jira.IssueLinkType
+}
+
+// IssueLinkCreatedMsg is sent after an issue link is created.
+type IssueLinkCreatedMsg struct {
+	SourceKey string
+	TargetKey string
+	Err       error
+}
+
+// IssueDeletedMsg is sent after an issue is deleted.
+type IssueDeletedMsg struct {
+	Key string
+	Err error
+}
+
+// BranchInfoMsg carries git branch information for the issue detail view.
+type BranchInfoMsg struct {
+	IssueKey string
+	Branches []jira.BranchInfo
+}
+
 // FilterSavedMsg is sent when a filter has been successfully saved or updated.
 type FilterSavedMsg struct {
 	Filter jira.SavedFilter

@@ -61,6 +61,25 @@ func (m Model) SetIssues(issues []jira.Issue) Model {
 	return m
 }
 
+// UpdateIssueStatus updates the status of a specific issue in the list.
+func (m Model) UpdateIssueStatus(key, newStatus string) Model {
+	for i, iss := range m.issues {
+		if iss.Key == key {
+			m.issues[i].Status = newStatus
+		}
+	}
+	items := m.list.Items()
+	for i, item := range items {
+		if it, ok := item.(issuedelegate.Item); ok && it.Key() == key {
+			items[i] = it.WithStatus(newStatus)
+		}
+	}
+	idx := m.list.Index()
+	m.list.SetItems(items)
+	m.list.Select(idx)
+	return m
+}
+
 // AppendIssues adds more issues to the existing list (for progressive pagination).
 // Deduplicates by issue key to handle overlapping API pages.
 // When a filter is applied (input closed), items are buffered to avoid disrupting

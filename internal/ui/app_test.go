@@ -14,8 +14,30 @@ import (
 	"github.com/seanhalberthal/jiru/internal/ui/branchview"
 	"github.com/seanhalberthal/jiru/internal/ui/commentview"
 	"github.com/seanhalberthal/jiru/internal/ui/createview"
+	"github.com/seanhalberthal/jiru/internal/ui/issuepickview"
+	"github.com/seanhalberthal/jiru/internal/ui/issueview"
 	"github.com/seanhalberthal/jiru/internal/ui/transitionview"
 )
+
+// findMsgInBatch recursively executes a tea.Cmd tree and returns true
+// if the predicate matches any resulting tea.Msg. Handles nested BatchMsg.
+func findMsgInBatch(cmd tea.Cmd, match func(tea.Msg) bool) bool {
+	if cmd == nil {
+		return false
+	}
+	msg := cmd()
+	if match(msg) {
+		return true
+	}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if findMsgInBatch(c, match) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // --- Stub client ---
 
@@ -104,6 +126,13 @@ func (s *stubClient) AddComment(_, _ string) error {
 func (s *stubClient) ChildIssues(_ string) ([]jira.ChildIssue, error) {
 	return nil, nil
 }
+func (s *stubClient) AssignIssue(_, _ string) error { return nil }
+func (s *stubClient) EditIssue(_ string, _ *client.EditIssueRequest) error {
+	return nil
+}
+func (s *stubClient) LinkIssue(_, _, _ string) error                   { return nil }
+func (s *stubClient) GetIssueLinkTypes() ([]jira.IssueLinkType, error) { return nil, nil }
+func (s *stubClient) DeleteIssue(_ string, _ bool) error               { return nil }
 func (s *stubClient) SprintIssuesPage(_ int, from, pageSize int) (*client.PageResult, error) {
 	if s.sprintIssErr != nil {
 		return nil, s.sprintIssErr
@@ -305,24 +334,16 @@ func TestApp_ClientReadyMsg_DirectIssue_FetchesDetail(t *testing.T) {
 	}
 
 	// Execute the batch command — one of the results should be IssueDetailMsg.
-	msg := cmd()
-	batch, ok := msg.(tea.BatchMsg)
-	if !ok {
-		t.Fatalf("expected tea.BatchMsg, got %T", msg)
-	}
-	var found bool
-	for _, c := range batch {
-		if c == nil {
-			continue
-		}
-		if detail, ok := c().(IssueDetailMsg); ok {
+	// The batch may be nested (fetchIssueBundle wraps multiple cmds), so search recursively.
+	if !findMsgInBatch(cmd, func(m tea.Msg) bool {
+		if detail, ok := m.(IssueDetailMsg); ok {
 			if detail.Issue.Key != "PROJ-1" {
 				t.Errorf("expected PROJ-1, got %s", detail.Issue.Key)
 			}
-			found = true
+			return true
 		}
-	}
-	if !found {
+		return false
+	}) {
 		t.Fatal("expected IssueDetailMsg in batch")
 	}
 }
@@ -863,6 +884,356 @@ func TestApp_CtrlC_AlwaysQuits(t *testing.T) {
 	msg := cmd()
 	if _, ok := msg.(tea.QuitMsg); !ok {
 		t.Errorf("expected tea.QuitMsg, got %T", msg)
+	}
+}
+
+// --- Issue navigation stack tests ---
+
+func TestApp_ParentKey_PushesStackAndFetches(t *testing.T) {
+	c := defaultStub()
+	c.issue = &jira.Issue{Key: "PROJ-1", Summary: "Parent Issue", Status: "To Do"}
+	app := newTestApp(c, "")
+	app.active = viewIssue
+	app.previousView = viewSprint
+
+	// Set an issue with a parent.
+	childIssue := jira.Issue{
+		Key:           "PROJ-2",
+		Summary:       "Child Issue",
+		Status:        "In Progress",
+		ParentKey:     "PROJ-1",
+		ParentSummary: "Parent Issue",
+	}
+	app.issue = app.issue.SetIssue(childIssue)
+
+	// Press 'p' to navigate to parent.
+	model, cmd := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue, got %d", a.active)
+	}
+	if len(a.issueStack) != 1 {
+		t.Fatalf("expected 1 item on stack, got %d", len(a.issueStack))
+	}
+	if a.issueStack[0].Key != "PROJ-2" {
+		t.Errorf("expected PROJ-2 on stack, got %s", a.issueStack[0].Key)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd (fetch parent detail)")
+	}
+	// Current issue should be the placeholder for the parent.
+	if iss := a.issue.CurrentIssue(); iss == nil || iss.Key != "PROJ-1" {
+		t.Error("expected current issue to be PROJ-1 placeholder")
+	}
+}
+
+func TestApp_ParentKey_NoParent_NoOp(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewIssue
+	app.previousView = viewSprint
+
+	// Issue without parent.
+	app.issue = app.issue.SetIssue(jira.Issue{Key: "PROJ-1", Summary: "No parent", Status: "To Do"})
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	a := model.(App)
+
+	if len(a.issueStack) != 0 {
+		t.Errorf("expected empty stack, got %d", len(a.issueStack))
+	}
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue, got %d", a.active)
+	}
+}
+
+func TestApp_BackKey_FromIssue_PopsStack(t *testing.T) {
+	c := defaultStub()
+	c.issue = &jira.Issue{Key: "PROJ-2", Summary: "Child", Status: "To Do"}
+	app := newTestApp(c, "")
+	app.active = viewIssue
+	app.previousView = viewSprint
+
+	// Set up the stack: child was pushed when navigating to parent.
+	childIssue := jira.Issue{Key: "PROJ-2", Summary: "Child Issue", Status: "In Progress"}
+	app.issueStack = []jira.Issue{childIssue}
+	app.issue = app.issue.SetIssue(jira.Issue{Key: "PROJ-1", Summary: "Parent", Status: "To Do"})
+
+	// Press esc — should pop back to child, not go to sprint.
+	model, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue (popped from stack), got %d", a.active)
+	}
+	if len(a.issueStack) != 0 {
+		t.Errorf("expected empty stack after pop, got %d", len(a.issueStack))
+	}
+	if iss := a.issue.CurrentIssue(); iss == nil || iss.Key != "PROJ-2" {
+		t.Error("expected current issue to be PROJ-2 after pop")
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd (re-fetch child detail)")
+	}
+}
+
+func TestApp_IssuePickKey_OpensPickerOverlay(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewIssue
+	app.previousView = viewSprint
+
+	// Issue with parent and children.
+	app.issue = app.issue.SetIssue(jira.Issue{
+		Key:       "PROJ-5",
+		Summary:   "Main",
+		Status:    "To Do",
+		ParentKey: "PROJ-1",
+	})
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	a := model.(App)
+
+	if a.active != viewIssuePick {
+		t.Errorf("expected viewIssuePick, got %d", a.active)
+	}
+}
+
+func TestApp_IssuePickKey_NoRefs_NoOp(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewIssue
+	app.previousView = viewSprint
+
+	// Issue with no references at all.
+	app.issue = app.issue.SetIssue(jira.Issue{Key: "PROJ-5", Summary: "Lonely", Status: "To Do"})
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue (no refs), got %d", a.active)
+	}
+}
+
+func TestApp_IssuePick_EscDismisses(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewIssue
+	app.previousView = viewSprint
+
+	app.issue = app.issue.SetIssue(jira.Issue{
+		Key:       "PROJ-5",
+		Summary:   "Main",
+		Status:    "To Do",
+		ParentKey: "PROJ-1",
+	})
+
+	// Open picker.
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	a := model.(App)
+
+	// Press esc to dismiss.
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a = model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue after dismiss, got %d", a.active)
+	}
+}
+
+func TestApp_IssueStack_ClearedOnNewIssueFromList(t *testing.T) {
+	c := defaultStub()
+	c.issue = &jira.Issue{Key: "PROJ-3", Summary: "New", Status: "To Do"}
+	app := newTestApp(c, "")
+	app.active = viewIssue
+	app.previousView = viewSprint
+	app.issueStack = []jira.Issue{
+		{Key: "PROJ-1", Summary: "Old", Status: "To Do"},
+	}
+
+	// Selecting from list should clear the stack.
+	model, _ := app.Update(IssueSelectedMsg{Issue: jira.Issue{Key: "PROJ-3", Summary: "New", Status: "To Do"}})
+	a := model.(App)
+
+	if len(a.issueStack) != 0 {
+		t.Errorf("expected stack cleared on IssueSelectedMsg, got %d", len(a.issueStack))
+	}
+}
+
+func TestApp_IssueStack_ClearedOnHome(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewIssue
+	app.previousView = viewSprint
+	app.issueStack = []jira.Issue{
+		{Key: "PROJ-1", Summary: "Old", Status: "To Do"},
+	}
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("H")})
+	a := model.(App)
+
+	if len(a.issueStack) != 0 {
+		t.Errorf("expected stack cleared on Home, got %d", len(a.issueStack))
+	}
+	if a.active != viewHome {
+		t.Errorf("expected viewHome, got %d", a.active)
+	}
+}
+
+func TestApp_IssuePick_SelectPushesStackAndNavigates(t *testing.T) {
+	c := defaultStub()
+	c.issue = &jira.Issue{Key: "PROJ-1", Summary: "Parent", Status: "To Do"}
+	app := newTestApp(c, "")
+
+	// Set up: viewing PROJ-5 with picker open showing PROJ-1.
+	currentIss := jira.Issue{Key: "PROJ-5", Summary: "Current", Status: "To Do", ParentKey: "PROJ-1"}
+	app.issue = app.issue.SetIssue(currentIss)
+	app.issuePick = issuepickview.New([]issueview.IssueRef{{Key: "PROJ-1", Label: "parent"}})
+	app.issuePick.SetSize(120, 40)
+	app.active = viewIssuePick
+
+	// Press enter to select PROJ-1 from picker.
+	model, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(App)
+
+	if a.active != viewIssue {
+		t.Errorf("expected viewIssue after pick, got %d", a.active)
+	}
+	if len(a.issueStack) != 1 {
+		t.Fatalf("expected 1 item on stack, got %d", len(a.issueStack))
+	}
+	if a.issueStack[0].Key != "PROJ-5" {
+		t.Errorf("expected PROJ-5 on stack, got %s", a.issueStack[0].Key)
+	}
+	if iss := a.issue.CurrentIssue(); iss == nil || iss.Key != "PROJ-1" {
+		t.Error("expected current issue to be PROJ-1 placeholder")
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd (fetch detail)")
+	}
+}
+
+func TestApp_IssuePick_GlobalKeysBlocked(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+
+	app.issue = app.issue.SetIssue(jira.Issue{
+		Key:       "PROJ-5",
+		Summary:   "Main",
+		Status:    "To Do",
+		ParentKey: "PROJ-1",
+	})
+	app.issuePick = issuepickview.New([]issueview.IssueRef{{Key: "PROJ-1", Label: "parent"}})
+	app.issuePick.SetSize(120, 40)
+	app.active = viewIssuePick
+
+	// Press 'p' — should be swallowed by the picker, not navigate to parent.
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	a := model.(App)
+
+	if a.active != viewIssuePick {
+		t.Errorf("expected viewIssuePick (key blocked), got %d", a.active)
+	}
+	if len(a.issueStack) != 0 {
+		t.Error("expected empty stack — 'p' should not have triggered parent navigation")
+	}
+}
+
+func TestApp_IssueStack_MultiLevelPopOrder(t *testing.T) {
+	c := defaultStub()
+	c.issue = &jira.Issue{Key: "PROJ-1", Summary: "Grandparent", Status: "To Do"}
+	app := newTestApp(c, "")
+	app.active = viewIssue
+	app.previousView = viewSprint
+
+	// Stack: [grandparent, parent], currently viewing grandchild.
+	app.issueStack = []jira.Issue{
+		{Key: "PROJ-1", Summary: "Grandparent", Status: "To Do"},
+		{Key: "PROJ-2", Summary: "Parent", Status: "To Do"},
+	}
+	app.issue = app.issue.SetIssue(jira.Issue{Key: "PROJ-3", Summary: "Grandchild", Status: "To Do"})
+
+	// Pop once → PROJ-2 (parent).
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a := model.(App)
+
+	if iss := a.issue.CurrentIssue(); iss == nil || iss.Key != "PROJ-2" {
+		t.Errorf("expected PROJ-2 after first pop, got %v", a.issue.CurrentIssue())
+	}
+	if len(a.issueStack) != 1 {
+		t.Errorf("expected stack depth 1, got %d", len(a.issueStack))
+	}
+
+	// Pop again → PROJ-1 (grandparent).
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a = model.(App)
+
+	if iss := a.issue.CurrentIssue(); iss == nil || iss.Key != "PROJ-1" {
+		t.Errorf("expected PROJ-1 after second pop, got %v", a.issue.CurrentIssue())
+	}
+	if len(a.issueStack) != 0 {
+		t.Errorf("expected empty stack, got %d", len(a.issueStack))
+	}
+
+	// Pop with empty stack → should go back to sprint view.
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a = model.(App)
+
+	if a.active != viewSprint {
+		t.Errorf("expected viewSprint after exhausting stack, got %d", a.active)
+	}
+}
+
+func TestApp_InputActive_TrueForIssuePick(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewIssuePick
+	app.issuePick = issuepickview.New([]issueview.IssueRef{{Key: "PROJ-1", Label: "parent"}})
+
+	if !app.inputActive() {
+		t.Error("expected inputActive() true for viewIssuePick")
+	}
+}
+
+func TestApp_BranchInfoMsg_UpdatesIssueView(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewIssue
+	app.issue = app.issue.SetIssue(jira.Issue{Key: "PROJ-1", Summary: "Test", Status: "To Do"})
+
+	model, _ := app.Update(BranchInfoMsg{
+		IssueKey: "PROJ-1",
+		Branches: []jira.BranchInfo{
+			{Name: "origin/feature/PROJ-1-fix", RemoteCommit: 5},
+		},
+	})
+	a := model.(App)
+
+	view := a.issue.View()
+	if !strings.Contains(view, "origin/feature/PROJ-1-fix") {
+		t.Error("expected branch name in issue view after BranchInfoMsg")
+	}
+}
+
+func TestApp_BranchInfoMsg_IgnoredWhenDifferentIssue(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewIssue
+	app.issue = app.issue.SetIssue(jira.Issue{Key: "PROJ-2", Summary: "Different", Status: "To Do"})
+
+	model, _ := app.Update(BranchInfoMsg{
+		IssueKey: "PROJ-1", // Different from current issue.
+		Branches: []jira.BranchInfo{
+			{Name: "origin/PROJ-1-fix", RemoteCommit: 3},
+		},
+	})
+	a := model.(App)
+
+	view := a.issue.View()
+	if strings.Contains(view, "origin/PROJ-1-fix") {
+		t.Error("expected BranchInfoMsg to be ignored for different issue")
 	}
 }
 
@@ -1641,6 +2012,12 @@ func TestFooterView_Issue(t *testing.T) {
 	if !strings.Contains(v, "browser") {
 		t.Error("expected 'browser' in issue footer")
 	}
+	if !strings.Contains(v, "parent") {
+		t.Error("expected 'parent' in issue footer")
+	}
+	if !strings.Contains(v, "go to issue") {
+		t.Error("expected 'go to issue' in issue footer")
+	}
 }
 
 func TestFooterView_Search(t *testing.T) {
@@ -1657,11 +2034,35 @@ func TestFooterView_Search(t *testing.T) {
 	}
 }
 
-func TestFooterView_Truncation(t *testing.T) {
-	v := footerView(viewSprint, 10, "", false)
-	// Should not exceed the specified width.
-	if len(v) > 100 { // generous buffer for ANSI codes
-		t.Error("footer should be truncated for narrow width")
+func TestFooterView_WrapsToMultipleRows(t *testing.T) {
+	// Issue view has >10 bindings, so it always wraps (max 10 per row).
+	v := footerView(viewIssue, 200, "", false)
+	rows := strings.Count(v, "\n") + 1
+	if rows < 2 {
+		t.Errorf("expected multiple rows for issue view (>10 bindings), got %d", rows)
+	}
+
+	// All bindings should still be present — none dropped.
+	for _, want := range []string{"parent", "delete", "JQL", "browser", "edit", "assign"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("expected %q in wrapped footer", want)
+		}
+	}
+
+	// A view with few bindings should stay on one row.
+	loading := footerView(viewLoading, 200, "", false)
+	if strings.Contains(loading, "\n") {
+		t.Error("expected single row for loading view")
+	}
+}
+
+func TestFooterView_VersionOnLastRow(t *testing.T) {
+	v := footerView(viewLoading, 80, "v1.2.3", false)
+	if !strings.Contains(v, "v1.2.3") {
+		t.Error("expected version in footer")
+	}
+	if !strings.Contains(v, "quit") {
+		t.Error("expected quit binding in footer")
 	}
 }
 
@@ -1730,8 +2131,8 @@ func TestApp_TransitionKey_FromIssue(t *testing.T) {
 	if a.active != viewTransition {
 		t.Errorf("expected viewTransition, got %d", a.active)
 	}
-	if a.previousView != viewIssue {
-		t.Errorf("expected previousView viewIssue, got %d", a.previousView)
+	if a.transitionOrigin != viewIssue {
+		t.Errorf("expected transitionOrigin viewIssue, got %d", a.transitionOrigin)
 	}
 	if cmd == nil {
 		t.Error("expected non-nil cmd (fetchTransitions)")
@@ -1783,8 +2184,9 @@ func TestApp_CommentKey_FromIssue(t *testing.T) {
 	if a.active != viewComment {
 		t.Errorf("expected viewComment, got %d", a.active)
 	}
-	if a.previousView != viewIssue {
-		t.Errorf("expected previousView viewIssue, got %d", a.previousView)
+	// previousView should be preserved (not overwritten by comment overlay).
+	if a.previousView != viewSprint {
+		t.Errorf("expected previousView viewSprint (preserved), got %d", a.previousView)
 	}
 }
 
@@ -1843,7 +2245,7 @@ func TestApp_IssueTransitionedMsg_Success(t *testing.T) {
 	c := defaultStub()
 	app := newTestApp(c, "")
 	app.active = viewTransition
-	app.previousView = viewIssue
+	app.transitionOrigin = viewIssue
 	c.issue = &jira.Issue{Key: "PROJ-1", Summary: "Test", Status: "In Progress"}
 
 	model, cmd := app.Update(IssueTransitionedMsg{Key: "PROJ-1", NewStatus: "In Progress"})
@@ -1865,7 +2267,7 @@ func TestApp_IssueTransitionedMsg_Success_FromBoard(t *testing.T) {
 	c.boardSprints = []jira.Sprint{{ID: 10, Name: "Sprint 10"}}
 	app := newTestApp(c, "")
 	app.active = viewTransition
-	app.previousView = viewBoard
+	app.transitionOrigin = viewBoard
 	app.boardID = 42
 
 	model, cmd := app.Update(IssueTransitionedMsg{Key: "PROJ-1", NewStatus: "Done"})
@@ -1886,7 +2288,7 @@ func TestApp_IssueTransitionedMsg_Error(t *testing.T) {
 	c := defaultStub()
 	app := newTestApp(c, "")
 	app.active = viewTransition
-	app.previousView = viewIssue
+	app.transitionOrigin = viewIssue
 
 	model, _ := app.Update(IssueTransitionedMsg{Key: "PROJ-1", Err: errors.New("transition failed")})
 	a := model.(App)
@@ -1971,7 +2373,7 @@ func TestApp_BackKey_FromTransition_ReturnsToPreviousView(t *testing.T) {
 	c := defaultStub()
 	app := newTestApp(c, "")
 	app.active = viewTransition
-	app.previousView = viewIssue
+	app.transitionOrigin = viewIssue
 
 	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	a := model.(App)
@@ -1985,7 +2387,7 @@ func TestApp_BackKey_FromTransition_ReturnsToBoardView(t *testing.T) {
 	c := defaultStub()
 	app := newTestApp(c, "")
 	app.active = viewTransition
-	app.previousView = viewBoard
+	app.transitionOrigin = viewBoard
 
 	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	a := model.(App)
@@ -2015,7 +2417,7 @@ func TestApp_QKey_FromTransition_SuppressedByInputActive(t *testing.T) {
 	app.transition = transitionview.New("PROJ-1")
 	app.transition.SetSize(120, 38)
 	app.active = viewTransition
-	app.previousView = viewIssue
+	app.transitionOrigin = viewIssue
 
 	// 'q' is suppressed by inputActive() — stays in transition view.
 	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
@@ -2050,7 +2452,7 @@ func TestApp_EscKey_FromTransition_DismissesViaChildModel(t *testing.T) {
 	app.transition.SetSize(120, 38)
 	app.transition.SetTransitions([]jira.Transition{{ID: "1", Name: "Done"}})
 	app.active = viewTransition
-	app.previousView = viewIssue
+	app.transitionOrigin = viewIssue
 
 	// Esc is handled by child's Update, which sets Dismissed() — parent polls it.
 	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})

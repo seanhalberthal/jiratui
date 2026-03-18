@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"al.essio.dev/pkg/shellescape"
@@ -20,13 +21,18 @@ import (
 	"github.com/seanhalberthal/jiru/internal/jira"
 	"github.com/seanhalberthal/jiru/internal/jql"
 	"github.com/seanhalberthal/jiru/internal/theme"
+	"github.com/seanhalberthal/jiru/internal/ui/assignview"
 	"github.com/seanhalberthal/jiru/internal/ui/boardview"
 	"github.com/seanhalberthal/jiru/internal/ui/branchview"
 	"github.com/seanhalberthal/jiru/internal/ui/commentview"
 	"github.com/seanhalberthal/jiru/internal/ui/createview"
+	"github.com/seanhalberthal/jiru/internal/ui/deleteview"
+	"github.com/seanhalberthal/jiru/internal/ui/editview"
 	"github.com/seanhalberthal/jiru/internal/ui/filterview"
 	"github.com/seanhalberthal/jiru/internal/ui/homeview"
+	"github.com/seanhalberthal/jiru/internal/ui/issuepickview"
 	"github.com/seanhalberthal/jiru/internal/ui/issueview"
+	"github.com/seanhalberthal/jiru/internal/ui/linkview"
 	"github.com/seanhalberthal/jiru/internal/ui/searchview"
 	"github.com/seanhalberthal/jiru/internal/ui/setupview"
 	"github.com/seanhalberthal/jiru/internal/ui/sprintview"
@@ -49,41 +55,54 @@ const (
 	viewTransition
 	viewComment
 	viewFilters
+	viewAssign
+	viewEdit
+	viewLink
+	viewDelete
+	viewIssuePick
 )
 
 // App is the root bubbletea model.
 type App struct {
-	client        client.JiraClient
-	keys          KeyMap
-	active        view
-	previousView  view
-	searchOrigin  view // View that was active before search was opened.
-	filterOrigin  view // View that was active before filters was opened.
-	home          homeview.Model
-	sprint        sprintview.Model
-	issue         issueview.Model
-	search        searchview.Model
-	board         boardview.Model
-	branch        branchview.Model
-	create        createview.Model
-	transition    transitionview.Model
-	comment       commentview.Model
-	filter        filterview.Model
-	setup         setupview.Model
-	spinner       spinner.Model
-	width         int
-	height        int
-	statusMsg     string
-	err           error
-	boardID       int
-	directIssue   string
-	needsSetup    bool
-	currentIssues []jira.Issue       // Cached for list↔board toggle.
-	boardTitle    string             // Dynamic title: sprint name, board name, project key, etc.
-	jqlMetaLoaded bool               // Prevents redundant metadata fetches.
-	paginationSeq int                // Incremented each time a new fetch starts; stale pages are discarded.
-	savedFilters  []jira.SavedFilter // Cached filter list for filterview.
-	version       string
+	client           client.JiraClient
+	keys             KeyMap
+	active           view
+	previousView     view
+	searchOrigin     view // View that was active before search was opened.
+	filterOrigin     view // View that was active before filters was opened.
+	transitionOrigin view // View that was active before transition was opened.
+	home             homeview.Model
+	sprint           sprintview.Model
+	issue            issueview.Model
+	search           searchview.Model
+	board            boardview.Model
+	branch           branchview.Model
+	create           createview.Model
+	transition       transitionview.Model
+	comment          commentview.Model
+	filter           filterview.Model
+	assign           assignview.Model
+	edit             editview.Model
+	link             linkview.Model
+	del              deleteview.Model
+	issuePick        issuepickview.Model
+	setup            setupview.Model
+	spinner          spinner.Model
+	width            int
+	height           int
+	statusMsg        string
+	err              error
+	boardID          int
+	directIssue      string
+	needsSetup       bool
+	issueStack       []jira.Issue       // Stack of issues for parent/pick navigation.
+	currentIssues    []jira.Issue       // Cached for list↔board toggle.
+	boardTitle       string             // Dynamic title: sprint name, board name, project key, etc.
+	jqlMetaLoaded    bool               // Prevents redundant metadata fetches.
+	jqlMeta          *jira.JQLMetadata  // Cached metadata for edit view priorities etc.
+	paginationSeq    int                // Incremented each time a new fetch starts; stale pages are discarded.
+	savedFilters     []jira.SavedFilter // Cached filter list for filterview.
+	version          string
 }
 
 // NewApp creates a new root application model.
@@ -140,7 +159,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
-		contentHeight := msg.Height - 2 // Reserve for help bar.
+		contentHeight := msg.Height - 3 // Reserve for help bar (may wrap to 2 rows) + status line.
 		a.sprint = a.sprint.SetSize(msg.Width, contentHeight)
 		a.issue = a.issue.SetSize(msg.Width, contentHeight)
 		a.home.SetSize(msg.Width, contentHeight)
@@ -149,6 +168,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.branch.SetSize(msg.Width, contentHeight)
 		a.transition.SetSize(msg.Width, contentHeight)
 		a.comment.SetSize(msg.Width, contentHeight)
+		a.assign.SetSize(msg.Width, contentHeight)
+		a.edit.SetSize(msg.Width, contentHeight)
+		a.link.SetSize(msg.Width, contentHeight)
+		a.del.SetSize(msg.Width, contentHeight)
+		a.issuePick.SetSize(msg.Width, contentHeight)
 		a.filter.SetSize(msg.Width, contentHeight)
 		a.setup.SetSize(msg.Width, msg.Height)
 		a.create.SetSize(msg.Width, msg.Height)
@@ -212,6 +236,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.active = viewSetup
 			return a, a.setup.Init()
 		case key.Matches(msg, a.keys.Home) && a.active != viewHome && a.active != viewLoading:
+			a.issueStack = nil
 			a.active = viewHome
 			return a, nil
 		case key.Matches(msg, a.keys.Board) && a.active == viewSprint:
@@ -258,7 +283,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if issueKey != "" {
 				a.transition = transitionview.New(issueKey)
 				a.transition.SetSize(a.width, a.height-2)
-				a.previousView = a.active
+				a.transitionOrigin = a.active
 				a.active = viewTransition
 				return a, a.fetchTransitions(issueKey)
 			}
@@ -266,8 +291,56 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if iss := a.issue.CurrentIssue(); iss != nil {
 				a.comment = commentview.New(iss.Key)
 				a.comment.SetSize(a.width, a.height-2)
-				a.previousView = a.active
 				a.active = viewComment
+				return a, nil
+			}
+		case key.Matches(msg, a.keys.Assign) && a.active == viewIssue:
+			if iss := a.issue.CurrentIssue(); iss != nil {
+				a.assign = assignview.New(iss.Key, iss.Assignee)
+				a.assign.SetSize(a.width, a.height-2)
+				a.active = viewAssign
+				return a, nil
+			}
+		case key.Matches(msg, a.keys.Edit) && a.active == viewIssue:
+			if iss := a.issue.CurrentIssue(); iss != nil {
+				a.edit = editview.New(iss.Key)
+				var priorities []string
+				if a.jqlMeta != nil {
+					priorities = a.jqlMeta.Priorities
+				}
+				a.edit.SetIssue(*iss, priorities)
+				a.edit.SetSize(a.width, a.height-2)
+				a.active = viewEdit
+				return a, nil
+			}
+		case key.Matches(msg, a.keys.Link) && a.active == viewIssue:
+			if iss := a.issue.CurrentIssue(); iss != nil {
+				a.link = linkview.New(iss.Key)
+				a.link.SetSize(a.width, a.height-2)
+				a.active = viewLink
+				return a, a.fetchLinkTypes()
+			}
+		case key.Matches(msg, a.keys.Delete) && a.active == viewIssue:
+			if iss := a.issue.CurrentIssue(); iss != nil {
+				a.del = deleteview.New(iss.Key, iss.Summary)
+				a.del.SetSize(a.width, a.height-2)
+				a.active = viewDelete
+				return a, nil
+			}
+		case key.Matches(msg, a.keys.Parent) && a.active == viewIssue:
+			if iss := a.issue.CurrentIssue(); iss != nil && a.issue.HasParent() {
+				a.issueStack = append(a.issueStack, *iss)
+				placeholder := jira.Issue{Key: iss.ParentKey, Summary: "Loading..."}
+				a.issue = a.issue.SetIssue(placeholder)
+				a.issue.SetIssueURL(a.client.IssueURL(iss.ParentKey))
+				return a, a.fetchIssueBundle(iss.ParentKey)
+			}
+		case key.Matches(msg, a.keys.IssuePick) && a.active == viewIssue:
+			refs := a.issue.IssueKeys()
+			if len(refs) > 0 {
+				a.issuePick = issuepickview.New(refs)
+				a.issuePick.SetSize(a.width, a.height-2)
+				a.active = viewIssuePick
 				return a, nil
 			}
 		case key.Matches(msg, a.keys.Filters) &&
@@ -284,6 +357,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.statusMsg = "Refreshing..."
 			a.paginationSeq++
 			return a, tea.Batch(a.spinner.Tick, a.fetchActiveSprintForBoard(a.boardID))
+		case key.Matches(msg, a.keys.Refresh) && a.active == viewHome:
+			a.statusMsg = "Refreshing..."
+			a.active = viewLoading
+			return a, tea.Batch(a.spinner.Tick, a.fetchBoards())
+		case key.Matches(msg, a.keys.Refresh) && a.active == viewIssue:
+			if iss := a.issue.CurrentIssue(); iss != nil {
+				a.statusMsg = "Refreshing..."
+				return a, a.fetchIssueBundle(iss.Key)
+			}
 		}
 
 	case ClientReadyMsg:
@@ -296,7 +378,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			metaCmd = a.fetchJQLMetadata()
 		}
 		if a.directIssue != "" {
-			return a, tea.Batch(a.fetchIssueDetail(a.directIssue), a.fetchChildIssues(a.directIssue), metaCmd)
+			return a, tea.Batch(a.fetchIssueBundle(a.directIssue), metaCmd)
 		}
 		if a.client.Config().BoardID != 0 {
 			a.boardID = a.client.Config().BoardID
@@ -368,12 +450,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case IssueSelectedMsg:
+		a.issueStack = nil
 		a.active = viewIssue
 		a.issue = a.issue.SetIssue(msg.Issue)
-		return a, tea.Batch(a.fetchIssueDetail(msg.Issue.Key), a.fetchChildIssues(msg.Issue.Key))
+		a.issue.SetIssueURL(a.client.IssueURL(msg.Issue.Key))
+		return a, a.fetchIssueBundle(msg.Issue.Key)
 
 	case IssueDetailMsg:
 		// Update the issue view with full details if we're still viewing it.
+		// Use UpdateIssue (not SetIssue) to preserve async-fetched children and branches.
 		if a.active == viewIssue && msg.Issue != nil {
 			// Preserve enriched parent data if the detail fetch didn't provide it.
 			if prev := a.issue.CurrentIssue(); prev != nil && msg.Issue.ParentKey != "" {
@@ -384,7 +469,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					msg.Issue.ParentSummary = prev.ParentSummary
 				}
 			}
-			a.issue = a.issue.SetIssue(*msg.Issue)
+			a.issue = a.issue.UpdateIssue(*msg.Issue)
+			a.issue.SetIssueURL(a.client.IssueURL(msg.Issue.Key))
 		}
 		return a, nil
 
@@ -392,6 +478,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.active == viewIssue {
 			if curr := a.issue.CurrentIssue(); curr != nil && curr.Key == msg.ParentKey {
 				a.issue = a.issue.SetChildren(msg.Children)
+			}
+		}
+		return a, nil
+
+	case BranchInfoMsg:
+		if a.active == viewIssue {
+			if curr := a.issue.CurrentIssue(); curr != nil && curr.Key == msg.IssueKey {
+				a.issue = a.issue.SetBranches(msg.Branches)
 			}
 		}
 		return a, nil
@@ -427,6 +521,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case JQLMetadataMsg:
 		a.search.SetMetadata(msg.Meta)
 		a.jqlMetaLoaded = true
+		a.jqlMeta = msg.Meta
 		if msg.Meta != nil {
 			if len(msg.Meta.Statuses) > 0 {
 				a.board.SetKnownStatuses(msg.Meta.Statuses)
@@ -460,22 +555,96 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case IssueTransitionedMsg:
 		if a.active == viewTransition {
-			a.active = a.previousView
+			a.active = a.transitionOrigin
 			if msg.Err != nil {
 				a.err = msg.Err
 			} else {
 				a.statusMsg = fmt.Sprintf("Moved to %s", msg.NewStatus)
+				// Update cached issue lists so stale status isn't shown on back-navigation.
+				for i, iss := range a.currentIssues {
+					if iss.Key == msg.Key {
+						a.currentIssues[i].Status = msg.NewStatus
+					}
+				}
+				a.search.UpdateIssueStatus(msg.Key, msg.NewStatus)
+				a.sprint = a.sprint.UpdateIssueStatus(msg.Key, msg.NewStatus)
 				var cmds []tea.Cmd
-				if a.previousView == viewIssue {
+				if a.transitionOrigin == viewIssue {
 					// Re-fetch issue details to reflect the new status.
 					cmds = append(cmds, a.fetchIssueDetail(msg.Key))
 				}
-				if a.previousView == viewBoard || a.previousView == viewSprint {
+				if a.transitionOrigin == viewBoard || a.transitionOrigin == viewSprint {
 					// Refresh the board/sprint to reflect the status change.
 					cmds = append(cmds, a.refreshCurrentView())
 				}
 				if len(cmds) > 0 {
 					return a, tea.Batch(cmds...)
+				}
+			}
+		}
+		return a, nil
+
+	case IssueAssignedMsg:
+		if a.active == viewAssign {
+			a.active = viewIssue
+			if msg.Err != nil {
+				a.err = sanitiseError(msg.Err)
+			} else {
+				a.statusMsg = fmt.Sprintf("Assigned to %s", msg.Assignee)
+				return a, a.fetchIssueDetail(msg.Key)
+			}
+		}
+		return a, nil
+
+	case AssignUserSearchMsg:
+		if a.active == viewAssign {
+			a.assign.SetUsers(msg.Users)
+		}
+		return a, nil
+
+	case IssueEditedMsg:
+		if a.active == viewEdit {
+			a.active = viewIssue
+			if msg.Err != nil {
+				a.err = sanitiseError(msg.Err)
+			} else {
+				a.statusMsg = fmt.Sprintf("Updated %s", msg.Key)
+				return a, a.fetchIssueDetail(msg.Key)
+			}
+		}
+		return a, nil
+
+	case LinkTypesLoadedMsg:
+		if a.active == viewLink {
+			a.link.SetLinkTypes(msg.Types)
+		}
+		return a, nil
+
+	case IssueLinkCreatedMsg:
+		if a.active == viewLink {
+			a.active = viewIssue
+			if msg.Err != nil {
+				a.err = sanitiseError(msg.Err)
+			} else {
+				a.statusMsg = fmt.Sprintf("Linked %s → %s", msg.SourceKey, msg.TargetKey)
+				return a, a.fetchIssueDetail(msg.SourceKey)
+			}
+		}
+		return a, nil
+
+	case IssueDeletedMsg:
+		if a.active == viewDelete {
+			if msg.Err != nil {
+				a.active = viewIssue
+				a.err = sanitiseError(msg.Err)
+			} else {
+				a.statusMsg = fmt.Sprintf("Deleted %s", msg.Key)
+				// Navigate to previous list view, not back to the deleted issue.
+				switch a.previousView {
+				case viewBoard:
+					a.active = viewBoard
+				default:
+					a.active = viewSprint
 				}
 			}
 		}
@@ -592,7 +761,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.issue = a.issue.SetIssue(iss)
 			a.issue.SetIssueURL(a.client.IssueURL(iss.Key))
 			// Fetch full details and children in background.
-			return a, tea.Batch(cmd, a.fetchIssueDetail(iss.Key), a.fetchChildIssues(iss.Key))
+			return a, tea.Batch(cmd, a.fetchIssueBundle(iss.Key))
 		}
 	case viewBoard:
 		a.board, cmd = a.board.Update(msg)
@@ -601,12 +770,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.previousView = viewBoard
 			a.issue = a.issue.SetIssue(iss)
 			a.issue.SetIssueURL(a.client.IssueURL(iss.Key))
-			return a, tea.Batch(cmd, a.fetchIssueDetail(iss.Key), a.fetchChildIssues(iss.Key))
+			return a, tea.Batch(cmd, a.fetchIssueBundle(iss.Key))
 		}
 	case viewIssue:
 		a.issue, cmd = a.issue.Update(msg)
 		if url, ok := a.issue.OpenURL(); ok {
 			openBrowser(url)
+		}
+		if url, ok := a.issue.CopyURL(); ok {
+			if err := copyToClipboard(url); err == nil {
+				a.statusMsg = fmt.Sprintf("Copied: %s", url)
+			} else {
+				a.err = fmt.Errorf("clipboard: %w", err)
+			}
 		}
 	case viewBranch:
 		a.branch, cmd = a.branch.Update(msg)
@@ -626,7 +802,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			key := a.create.CreatedKey()
 			a.statusMsg = fmt.Sprintf("Created %s", key)
 			a.active = viewIssue
-			return a, tea.Batch(a.fetchIssueDetail(key), a.fetchChildIssues(key))
+			return a, a.fetchIssueBundle(key)
 		}
 	case viewTransition:
 		a.transition, cmd = a.transition.Update(msg)
@@ -634,7 +810,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.transitionIssue(a.transition.IssueKey(), t.ID, t.Name)
 		}
 		if a.transition.Dismissed() {
-			a.active = a.previousView
+			a.active = a.transitionOrigin
 		}
 	case viewComment:
 		a.comment, cmd = a.comment.Update(msg)
@@ -644,6 +820,56 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.comment.Dismissed() {
 			a.active = viewIssue
 		}
+	case viewAssign:
+		a.assign, cmd = a.assign.Update(msg)
+		if prefix := a.assign.NeedsUserSearch(); prefix != "" {
+			cmd = tea.Batch(cmd, a.searchUsersForAssign(prefix))
+		}
+		if req := a.assign.SelectedAssignee(); req != nil {
+			return a, a.assignIssue(a.issue.CurrentIssue().Key, req)
+		}
+		if a.assign.Dismissed() {
+			a.active = viewIssue
+		}
+	case viewEdit:
+		a.edit, cmd = a.edit.Update(msg)
+		if req := a.edit.SubmittedEdit(); req != nil {
+			return a, a.editIssue(a.issue.CurrentIssue().Key, req)
+		}
+		if a.edit.Dismissed() {
+			a.active = viewIssue
+		}
+	case viewLink:
+		a.link, cmd = a.link.Update(msg)
+		if req := a.link.SubmittedLink(); req != nil {
+			return a, a.linkIssue(req)
+		}
+		if a.link.Dismissed() {
+			a.active = viewIssue
+		}
+	case viewDelete:
+		a.del, cmd = a.del.Update(msg)
+		if req := a.del.Confirmed(); req != nil {
+			return a, a.deleteIssue(req)
+		}
+		if a.del.Dismissed() {
+			a.active = viewIssue
+		}
+	case viewIssuePick:
+		a.issuePick, cmd = a.issuePick.Update(msg)
+		if ref := a.issuePick.Selected(); ref != nil {
+			if iss := a.issue.CurrentIssue(); iss != nil {
+				a.issueStack = append(a.issueStack, *iss)
+			}
+			placeholder := jira.Issue{Key: ref.Key, Summary: "Loading..."}
+			a.issue = a.issue.SetIssue(placeholder)
+			a.issue.SetIssueURL(a.client.IssueURL(ref.Key))
+			a.active = viewIssue
+			return a, a.fetchIssueBundle(ref.Key)
+		}
+		if a.issuePick.Dismissed() {
+			a.active = viewIssue
+		}
 	case viewFilters:
 		a.filter, cmd = a.filter.Update(msg)
 
@@ -651,6 +877,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Stay on viewFilters while loading — SearchResultsMsg transitions to viewSearch.
 		if f := a.filter.Applied(); f != nil {
 			a.searchOrigin = viewFilters
+			a.search.SetFilterName(f.Name)
 			a.statusMsg = "Searching..."
 			a.paginationSeq++
 			return a, tea.Batch(cmd, a.searchJQL(f.JQL))
@@ -719,10 +946,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, cmd
 		}
 		if iss := a.search.SelectedIssue(); iss != nil {
+			a.issueStack = nil
 			a.search.Hide()
 			a.previousView = viewSearch
 			a.active = viewIssue
-			return a, tea.Batch(cmd, a.fetchIssueDetail(iss.Key), a.fetchChildIssues(iss.Key))
+			return a, tea.Batch(cmd, a.fetchIssueBundle(iss.Key))
 		}
 		// User closed search without entering a query — return to previous view.
 		if a.search.Dismissed() {
@@ -787,6 +1015,16 @@ func (a App) View() string {
 		content = a.comment.View()
 	case viewFilters:
 		content = a.filter.View()
+	case viewAssign:
+		content = a.assign.View()
+	case viewEdit:
+		content = a.edit.View()
+	case viewLink:
+		content = a.link.View()
+	case viewDelete:
+		content = a.del.View()
+	case viewIssuePick:
+		content = a.issuePick.View()
 	}
 
 	if a.err != nil {
@@ -897,6 +1135,21 @@ func (a App) inputActive() bool {
 	if a.active == viewFilters && a.filter.InputActive() {
 		return true
 	}
+	if a.active == viewAssign && a.assign.InputActive() {
+		return true
+	}
+	if a.active == viewEdit && a.edit.InputActive() {
+		return true
+	}
+	if a.active == viewLink && a.link.InputActive() {
+		return true
+	}
+	if a.active == viewDelete && a.del.InputActive() {
+		return true
+	}
+	if a.active == viewIssuePick && a.issuePick.InputActive() {
+		return true
+	}
 	return false
 }
 
@@ -921,15 +1174,37 @@ func (a App) navigateBack() (tea.Model, tea.Cmd) {
 		a.active = a.filterOrigin
 		return a, nil
 	case viewTransition:
-		a.active = a.previousView
+		a.active = a.transitionOrigin
 		return a, nil
 	case viewComment:
+		a.active = viewIssue
+		return a, nil
+	case viewAssign:
+		a.active = viewIssue
+		return a, nil
+	case viewEdit:
+		a.active = viewIssue
+		return a, nil
+	case viewLink:
+		a.active = viewIssue
+		return a, nil
+	case viewDelete:
 		a.active = viewIssue
 		return a, nil
 	case viewBranch:
 		a.active = viewIssue
 		return a, nil
+	case viewIssuePick:
+		a.active = viewIssue
+		return a, nil
 	case viewIssue:
+		if len(a.issueStack) > 0 {
+			prev := a.issueStack[len(a.issueStack)-1]
+			a.issueStack = a.issueStack[:len(a.issueStack)-1]
+			a.issue = a.issue.SetIssue(prev)
+			a.issue.SetIssueURL(a.client.IssueURL(prev.Key))
+			return a, a.fetchIssueBundle(prev.Key)
+		}
 		switch a.previousView {
 		case viewSearch:
 			a.search.Reshow()
@@ -958,6 +1233,11 @@ func (a App) navigateBack() (tea.Model, tea.Cmd) {
 		a.active = a.previousView
 		return a, nil
 	case viewSearch:
+		// If the results list filter is applied, clear it first.
+		if a.search.ResultsFiltered() {
+			a.search.ResetResultsFilter()
+			return a, nil
+		}
 		// If showing results and we came from filters, go back to filters
 		// instead of dropping into the JQL input.
 		if a.search.ShowingResults() && a.previousView == viewFilters {
@@ -977,6 +1257,10 @@ func (a App) navigateBack() (tea.Model, tea.Cmd) {
 		// Initial load or no meaningful previous view — quit.
 		return a, tea.Quit
 	case viewHome:
+		if a.home.Filtered() {
+			a.home.ResetFilter()
+			return a, nil
+		}
 		return a, tea.Quit
 	}
 	return a, nil
@@ -1201,6 +1485,134 @@ func (a App) addComment(key, body string) tea.Cmd {
 	}
 }
 
+func (a App) searchUsersForAssign(prefix string) tea.Cmd {
+	return func() tea.Msg {
+		users, err := a.client.SearchUsers(a.client.Config().Project, prefix)
+		if err != nil {
+			return AssignUserSearchMsg{Users: nil}
+		}
+		return AssignUserSearchMsg{Users: users}
+	}
+}
+
+func (a App) assignIssue(key string, req *assignview.AssignRequest) tea.Cmd {
+	return func() tea.Msg {
+		err := a.client.AssignIssue(key, req.AccountID)
+		if err != nil {
+			return IssueAssignedMsg{Key: key, Err: err}
+		}
+		return IssueAssignedMsg{Key: key, Assignee: req.DisplayName}
+	}
+}
+
+func (a App) editIssue(key string, req *client.EditIssueRequest) tea.Cmd {
+	return func() tea.Msg {
+		err := a.client.EditIssue(key, req)
+		if err != nil {
+			return IssueEditedMsg{Key: key, Err: err}
+		}
+		return IssueEditedMsg{Key: key}
+	}
+}
+
+func (a App) fetchLinkTypes() tea.Cmd {
+	return func() tea.Msg {
+		types, err := a.client.GetIssueLinkTypes()
+		if err != nil {
+			return ErrMsg{Err: err}
+		}
+		return LinkTypesLoadedMsg{Types: types}
+	}
+}
+
+func (a App) linkIssue(req *linkview.LinkRequest) tea.Cmd {
+	return func() tea.Msg {
+		err := a.client.LinkIssue(req.InwardKey, req.OutwardKey, req.LinkType)
+		if err != nil {
+			return IssueLinkCreatedMsg{SourceKey: req.OutwardKey, TargetKey: req.InwardKey, Err: err}
+		}
+		return IssueLinkCreatedMsg{SourceKey: req.OutwardKey, TargetKey: req.InwardKey}
+	}
+}
+
+func (a App) deleteIssue(req *deleteview.DeleteRequest) tea.Cmd {
+	return func() tea.Msg {
+		err := a.client.DeleteIssue(req.Key, req.Cascade)
+		if err != nil {
+			return IssueDeletedMsg{Key: req.Key, Err: err}
+		}
+		return IssueDeletedMsg{Key: req.Key}
+	}
+}
+
+// fetchIssueBundle returns a batch of commands to fully load an issue:
+// detail, children, and branch info (if a repo path is configured).
+func (a App) fetchIssueBundle(key string) tea.Cmd {
+	cmds := []tea.Cmd{a.fetchIssueDetail(key), a.fetchChildIssues(key)}
+	if branchCmd := a.fetchBranchInfo(key); branchCmd != nil {
+		cmds = append(cmds, branchCmd)
+	}
+	return tea.Batch(cmds...)
+}
+
+func (a App) fetchBranchInfo(issueKey string) tea.Cmd {
+	repoPath := ""
+	if a.client != nil {
+		repoPath = a.client.Config().RepoPath
+	}
+	if repoPath == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		// Find all remote branches containing the issue key (case-insensitive).
+		out, err := exec.Command("git", "-C", repoPath, "branch", "-r", "--list",
+			"*"+strings.ToLower(issueKey)+"*", "*"+strings.ToUpper(issueKey)+"*").CombinedOutput()
+		if err != nil {
+			return BranchInfoMsg{IssueKey: issueKey}
+		}
+
+		// Also check with original case.
+		out2, err2 := exec.Command("git", "-C", repoPath, "branch", "-r", "--list",
+			"*"+issueKey+"*").CombinedOutput()
+		if err2 == nil {
+			out = append(out, out2...)
+		}
+
+		// Deduplicate branch names.
+		seen := make(map[string]bool)
+		var branches []jira.BranchInfo
+		for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+			name := strings.TrimSpace(line)
+			if name == "" || seen[name] {
+				continue
+			}
+			// Skip HEAD pointer refs (e.g., "origin/HEAD -> origin/main").
+			if strings.Contains(name, "->") {
+				continue
+			}
+			seen[name] = true
+
+			// Count commits on this remote branch relative to the default branch.
+			// Use rev-list to count commits that are on the branch but not on HEAD.
+			countOut, countErr := exec.Command("git", "-C", repoPath,
+				"rev-list", "--count", "HEAD.."+name).CombinedOutput()
+			commits := 0
+			if countErr == nil {
+				if n, parseErr := strconv.Atoi(strings.TrimSpace(string(countOut))); parseErr == nil {
+					commits = n
+				}
+			}
+
+			branches = append(branches, jira.BranchInfo{
+				Name:         name,
+				RemoteCommit: commits,
+			})
+		}
+
+		return BranchInfoMsg{IssueKey: issueKey, Branches: branches}
+	}
+}
+
 // refreshCurrentView returns a command to re-fetch the current sprint or board issues.
 func (a App) refreshCurrentView() tea.Cmd {
 	if a.boardID != 0 {
@@ -1351,4 +1763,18 @@ func openBrowser(url string) {
 		return
 	}
 	_ = cmd.Start()
+}
+
+func copyToClipboard(text string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	case "linux":
+		cmd = exec.Command("xclip", "-selection", "clipboard")
+	default:
+		return fmt.Errorf("clipboard not supported on %s", runtime.GOOS)
+	}
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
 }

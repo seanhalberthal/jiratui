@@ -80,6 +80,16 @@ func (m Model) Filtering() bool {
 	return m.list.FilterState() == list.Filtering
 }
 
+// Filtered returns true when a filter has been applied (but input is not active).
+func (m Model) Filtered() bool {
+	return m.list.FilterState() == list.FilterApplied
+}
+
+// ResetFilter clears the applied filter.
+func (m *Model) ResetFilter() {
+	m.list.ResetFilter()
+}
+
 func (m Model) View() string {
 	return m.list.View()
 }

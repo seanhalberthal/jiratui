@@ -22,6 +22,12 @@ type KeyMap struct {
 	Transition key.Binding
 	Comment    key.Binding
 	Filters    key.Binding
+	Assign     key.Binding
+	Edit       key.Binding
+	Link       key.Binding
+	Delete     key.Binding
+	Parent     key.Binding
+	IssuePick  key.Binding
 }
 
 // DefaultKeyMap returns the default vim-style keybindings.
@@ -98,6 +104,30 @@ func DefaultKeyMap() KeyMap {
 		Filters: key.NewBinding(
 			key.WithKeys("f"),
 			key.WithHelp("f", "saved filters"),
+		),
+		Assign: key.NewBinding(
+			key.WithKeys("a"),
+			key.WithHelp("a", "assign"),
+		),
+		Edit: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit"),
+		),
+		Link: key.NewBinding(
+			key.WithKeys("l"),
+			key.WithHelp("l", "link"),
+		),
+		Delete: key.NewBinding(
+			key.WithKeys("D"),
+			key.WithHelp("D", "delete"),
+		),
+		Parent: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "parent"),
+		),
+		IssuePick: key.NewBinding(
+			key.WithKeys("i"),
+			key.WithHelp("i", "go to issue"),
 		),
 	}
 }

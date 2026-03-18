@@ -23,6 +23,15 @@ func (i Item) FilterValue() string {
 	return i.Issue.Key + " " + i.Issue.Summary
 }
 
+// Key returns the issue key.
+func (i Item) Key() string { return i.Issue.Key }
+
+// WithStatus returns a copy of the item with the status updated.
+func (i Item) WithStatus(status string) Item {
+	i.Issue.Status = status
+	return i
+}
+
 // ToItems converts a slice of jira.Issue to list items.
 func ToItems(issues []jira.Issue) []list.Item {
 	items := make([]list.Item, len(issues))
@@ -107,7 +116,7 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	if assignee == "" {
 		assignee = "Unassigned"
 	}
-	line2 := theme.StyleSubtle.Render(fmt.Sprintf("  %s · %s", iss.IssueType, assignee))
+	line2 := fmt.Sprintf("  %s %s %s", theme.StyleSubtle.Render(iss.IssueType), theme.StyleSubtle.Render("·"), theme.UserStyle(assignee).Render(assignee))
 
 	if isSelected {
 		cursor := lipgloss.NewStyle().

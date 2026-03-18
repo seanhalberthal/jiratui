@@ -85,6 +85,20 @@ type SavedFilter struct {
 	UpdatedAt time.Time `yaml:"updated_at"`
 }
 
+// IssueLinkType represents a type of link between two issues.
+type IssueLinkType struct {
+	ID      string
+	Name    string
+	Inward  string // e.g., "is blocked by"
+	Outward string // e.g., "blocks"
+}
+
+// BranchInfo holds git branch information related to a Jira issue.
+type BranchInfo struct {
+	Name         string // Branch name (e.g., "feature/PROJ-123-fix-login")
+	RemoteCommit int    // Number of commits on remote ahead of the base branch
+}
+
 // Transition represents an available status transition for an issue.
 type Transition struct {
 	ID   string

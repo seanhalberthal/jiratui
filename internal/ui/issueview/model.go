@@ -2,6 +2,7 @@ package issueview
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -14,24 +15,40 @@ import (
 	"github.com/seanhalberthal/jiru/internal/theme"
 )
 
+// IssueRef represents a reference to another issue found in the current issue's context.
+type IssueRef struct {
+	Key   string
+	Label string // e.g., "parent", "child — Fix login bug", "in description"
+}
+
+var issueKeyExtractRe = regexp.MustCompile(`[A-Z][A-Z0-9]*-[0-9]+`)
+
 // Model is the issue detail view.
 type Model struct {
-	viewport viewport.Model
-	issue    *jira.Issue
-	children []jira.ChildIssue
-	issueURL string
-	width    int
-	height   int
-	openURL  bool // set when user presses 'o'.
-	openKeys key.Binding
+	viewport   viewport.Model
+	issue      *jira.Issue
+	children   []jira.ChildIssue
+	branches   []jira.BranchInfo
+	issueURL   string
+	width      int
+	height     int
+	openURL    bool // set when user presses 'o'.
+	copyURL    bool // set when user presses 'x'.
+	openKeys   key.Binding
+	copyKeys   key.Binding
+	topKeys    key.Binding
+	bottomKeys key.Binding
 }
 
 // New creates a new issue view model.
 func New() Model {
 	vp := viewport.New(0, 0)
 	return Model{
-		viewport: vp,
-		openKeys: key.NewBinding(key.WithKeys("o")),
+		viewport:   vp,
+		openKeys:   key.NewBinding(key.WithKeys("o")),
+		copyKeys:   key.NewBinding(key.WithKeys("x")),
+		topKeys:    key.NewBinding(key.WithKeys("g")),
+		bottomKeys: key.NewBinding(key.WithKeys("G")),
 	}
 }
 
@@ -52,14 +69,33 @@ func (m Model) SetSize(width, height int) Model {
 func (m Model) SetIssue(iss jira.Issue) Model {
 	m.issue = &iss
 	m.children = nil // Reset children until they're fetched for the new issue.
+	m.branches = nil // Reset branches until they're fetched for the new issue.
 	m.viewport.SetContent(m.renderContent())
 	m.viewport.GotoTop()
+	return m
+}
+
+// UpdateIssue updates the issue data without resetting children or branches.
+// Used when refreshing issue details (e.g., after IssueDetailMsg) where
+// async-fetched children and branches should be preserved.
+func (m Model) UpdateIssue(iss jira.Issue) Model {
+	m.issue = &iss
+	m.viewport.SetContent(m.renderContent())
 	return m
 }
 
 // SetChildren sets the child issues and re-renders.
 func (m Model) SetChildren(children []jira.ChildIssue) Model {
 	m.children = children
+	if m.issue != nil {
+		m.viewport.SetContent(m.renderContent())
+	}
+	return m
+}
+
+// SetBranches sets the git branch info and re-renders.
+func (m Model) SetBranches(branches []jira.BranchInfo) Model {
+	m.branches = branches
 	if m.issue != nil {
 		m.viewport.SetContent(m.renderContent())
 	}
@@ -85,12 +121,90 @@ func (m *Model) OpenURL() (string, bool) {
 	return m.issueURL, true
 }
 
+// CopyURL returns the URL to copy (if requested) and resets the flag.
+func (m *Model) CopyURL() (string, bool) {
+	if !m.copyURL || m.issueURL == "" {
+		return "", false
+	}
+	m.copyURL = false
+	return m.issueURL, true
+}
+
+// HasParent returns true if the current issue has a parent.
+func (m Model) HasParent() bool {
+	return m.issue != nil && m.issue.ParentKey != ""
+}
+
+// IssueKeys collects all referenced issue keys with context labels.
+// The current issue's own key is excluded and duplicates are removed.
+func (m Model) IssueKeys() []IssueRef {
+	if m.issue == nil {
+		return nil
+	}
+
+	seen := map[string]bool{m.issue.Key: true}
+	var refs []IssueRef
+
+	add := func(key, label string) {
+		if key == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		refs = append(refs, IssueRef{Key: key, Label: label})
+	}
+
+	// Parent.
+	if m.issue.ParentKey != "" {
+		label := "parent"
+		if m.issue.ParentSummary != "" {
+			label = "parent — " + m.issue.ParentSummary
+			if m.issue.ParentType != "" {
+				label += " (" + m.issue.ParentType + ")"
+			}
+		}
+		add(m.issue.ParentKey, label)
+	}
+
+	// Children.
+	for _, child := range m.children {
+		add(child.Key, "child — "+child.Summary)
+	}
+
+	// Keys in description.
+	if m.issue.Description != "" {
+		for _, key := range issueKeyExtractRe.FindAllString(m.issue.Description, -1) {
+			add(key, "in description")
+		}
+	}
+
+	// Keys in comments.
+	for _, c := range m.issue.Comments {
+		for _, key := range issueKeyExtractRe.FindAllString(c.Body, -1) {
+			add(key, "in comments")
+		}
+	}
+
+	return refs
+}
+
 // Update handles messages.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if key.Matches(msg, m.openKeys) && m.issueURL != "" {
 			m.openURL = true
+			return m, nil
+		}
+		if key.Matches(msg, m.copyKeys) && m.issueURL != "" {
+			m.copyURL = true
+			return m, nil
+		}
+		if key.Matches(msg, m.topKeys) {
+			m.viewport.GotoTop()
+			return m, nil
+		}
+		if key.Matches(msg, m.bottomKeys) {
+			m.viewport.GotoBottom()
 			return m, nil
 		}
 	}
@@ -155,10 +269,8 @@ func (m Model) renderContent() string {
 		fmt.Fprintf(&b, "%s %s\n", labelStyle.Render(label+":"), value)
 	}
 
-	statusStyle := theme.StatusStyle(iss.Status)
-	writeField("Status", statusStyle.Render(iss.Status))
-	writeField("Type", iss.IssueType)
-	writeField("Priority", iss.Priority)
+	writeField("Type", theme.TypeStyle(iss.IssueType).Render(iss.IssueType))
+	writeField("Priority", theme.PriorityStyle(iss.Priority).Render(iss.Priority))
 	writeField("Assignee", theme.UserStyle(iss.Assignee).Render(iss.Assignee))
 	writeField("Reporter", theme.UserStyle(iss.Reporter).Render(iss.Reporter))
 	if !iss.Created.IsZero() {
@@ -170,6 +282,23 @@ func (m Model) renderContent() string {
 
 	if len(iss.Labels) > 0 {
 		writeField("Labels", strings.Join(iss.Labels, ", "))
+	}
+
+	// Git branches.
+	if len(m.branches) > 0 {
+		for _, br := range m.branches {
+			val := theme.StyleKey.Render(br.Name)
+			if br.RemoteCommit > 0 {
+				commitStr := fmt.Sprintf("%d commit", br.RemoteCommit)
+				if br.RemoteCommit > 1 {
+					commitStr += "s"
+				}
+				val += "  " + theme.StyleStatusInProgress.Render(commitStr+" on remote")
+			} else {
+				val += "  " + theme.StyleSubtle.Render("no commits on remote")
+			}
+			writeField("Branch", val)
+		}
 	}
 
 	// Parent issue.
@@ -291,7 +420,7 @@ func wrapText(text string, width int) string {
 	}
 
 	var result strings.Builder
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if lipgloss.Width(line) <= width {
 			result.WriteString(line)
 			result.WriteString("\n")

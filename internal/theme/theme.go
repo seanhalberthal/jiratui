@@ -15,6 +15,7 @@ var (
 	ColourWarning   = lipgloss.AdaptiveColor{Light: "#885500", Dark: "#e0af68"}
 	ColourError     = lipgloss.AdaptiveColor{Light: "#cc0000", Dark: "#f7768e"}
 	ColourCancelled = lipgloss.AdaptiveColor{Light: "#888888", Dark: "#636363"}
+	ColourKey       = lipgloss.AdaptiveColor{Light: "#0e7490", Dark: "#2ac3de"}
 	ColourLogo      = lipgloss.AdaptiveColor{Light: "#6366F1", Dark: "#818CF8"}
 )
 
@@ -68,7 +69,7 @@ var (
 				Strikethrough(true)
 
 	StyleKey = lipgloss.NewStyle().
-			Foreground(ColourPrimary).
+			Foreground(ColourKey).
 			Bold(true)
 
 	StyleError = lipgloss.NewStyle().
@@ -130,7 +131,9 @@ func SetStatusCategoryMap(m map[string]int) {
 
 // StatusStyle returns the appropriate style for a given status.
 // Uses the instance-specific category map if available, falls back to
-// hardcoded name matching.
+// hardcoded name matching. Todo and in-progress statuses get deterministic
+// hash-based colours so different statuses within the same category are
+// visually distinguishable.
 func StatusStyle(status string) lipgloss.Style {
 	switch StatusCategory(status) {
 	case 3:
@@ -138,10 +141,85 @@ func StatusStyle(status string) lipgloss.Style {
 	case 2:
 		return StyleStatusDone
 	case 1:
-		return StyleStatusInProgress
+		colour := hashColour(status, statusInProgressColours)
+		return lipgloss.NewStyle().Foreground(colour).Bold(true)
 	default:
-		return StyleStatusOpen
+		colour := hashColour(status, statusTodoColours)
+		return lipgloss.NewStyle().Foreground(colour).Bold(true)
 	}
+}
+
+// hashColour returns a deterministic colour from a palette based on the name.
+func hashColour(name string, palette []lipgloss.AdaptiveColor) lipgloss.AdaptiveColor {
+	var h uint32
+	for _, c := range name {
+		h = h*31 + uint32(c)
+	}
+	return palette[h%uint32(len(palette))]
+}
+
+// statusTodoColours — blue hue family: variations from sky to indigo.
+var statusTodoColours = []lipgloss.AdaptiveColor{
+	{Light: "#1d4ed8", Dark: "#7aa2f7"}, // base blue
+	{Light: "#2563eb", Dark: "#89b4fa"}, // lighter blue
+	{Light: "#4338ca", Dark: "#818cf8"}, // indigo
+	{Light: "#4f46e5", Dark: "#a5b4fc"}, // soft indigo
+	{Light: "#3730a3", Dark: "#6d73de"}, // deep indigo
+	{Light: "#1e40af", Dark: "#93c5fd"}, // sky blue
+}
+
+// statusInProgressColours — warm hue family: amber through orange.
+var statusInProgressColours = []lipgloss.AdaptiveColor{
+	{Light: "#b45309", Dark: "#e0af68"}, // base amber
+	{Light: "#c2410c", Dark: "#ff9e64"}, // orange
+	{Light: "#d97706", Dark: "#ffc777"}, // gold
+	{Light: "#ea580c", Dark: "#ffb86c"}, // tangerine
+	{Light: "#a16207", Dark: "#d4a054"}, // dark gold
+	{Light: "#9a3412", Dark: "#f0a070"}, // burnt orange
+}
+
+// typeColours — purple-to-blue hue family.
+var typeColours = []lipgloss.AdaptiveColor{
+	{Light: "#7c3aed", Dark: "#bb9af7"}, // base purple
+	{Light: "#8b5cf6", Dark: "#c4b5fd"}, // soft violet
+	{Light: "#6d28d9", Dark: "#a78bfa"}, // deep purple
+	{Light: "#6366f1", Dark: "#9b9ef7"}, // periwinkle
+	{Light: "#4f46e5", Dark: "#818cf8"}, // indigo
+	{Light: "#4338ca", Dark: "#a5b4fc"}, // blue-indigo
+}
+
+// TypeStyle returns a consistent colour style for an issue type via hashing.
+func TypeStyle(issueType string) lipgloss.Style {
+	if issueType == "" {
+		return StyleSubtle
+	}
+	return lipgloss.NewStyle().Foreground(hashColour(issueType, typeColours))
+}
+
+// priorityColours — red-to-blue heat scale: urgent feels hot, low feels cool.
+var priorityColours = map[string]lipgloss.AdaptiveColor{
+	"highest":  {Light: "#b91c1c", Dark: "#f7768e"}, // red
+	"critical": {Light: "#b91c1c", Dark: "#f7768e"},
+	"blocker":  {Light: "#b91c1c", Dark: "#f7768e"},
+	"high":     {Light: "#c2410c", Dark: "#ff9e64"}, // orange-red
+	"major":    {Light: "#c2410c", Dark: "#ff9e64"},
+	"medium":   {Light: "#b45309", Dark: "#e0af68"}, // amber
+	"low":      {Light: "#1d4ed8", Dark: "#7aa2f7"}, // blue
+	"minor":    {Light: "#1d4ed8", Dark: "#7aa2f7"},
+	"lowest":   {Light: "#4338ca", Dark: "#818cf8"}, // indigo
+	"trivial":  {Light: "#4338ca", Dark: "#818cf8"},
+}
+
+// PriorityStyle returns a colour style for a priority level.
+// Known priorities get semantic heat-scale colours; unknown ones are hashed.
+func PriorityStyle(priority string) lipgloss.Style {
+	if priority == "" {
+		return StyleSubtle
+	}
+	if c, ok := priorityColours[strings.ToLower(priority)]; ok {
+		return lipgloss.NewStyle().Foreground(c)
+	}
+	return lipgloss.NewStyle().Foreground(hashColour(priority, typeColours))
 }
 
 // userColours is a palette of distinct, readable colours for user names.
