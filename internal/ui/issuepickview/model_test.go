@@ -192,3 +192,25 @@ func TestSmallList_NoScrollIndicators(t *testing.T) {
 		t.Error("expected no scroll indicators when all items fit")
 	}
 }
+
+func TestView_GroupHeaders(t *testing.T) {
+	refs := []issueview.IssueRef{
+		{Key: "PROJ-1", Label: "parent issue", Group: "Parent"},
+		{Key: "PROJ-2", Label: "child one", Group: "To Do (2)"},
+		{Key: "PROJ-3", Label: "child two", Group: "To Do (2)"},
+		{Key: "PROJ-4", Label: "done child", Group: "Done (1)"},
+	}
+	m := New(refs)
+	m.SetSize(120, 40)
+
+	view := m.View()
+	if !strings.Contains(view, "Parent") {
+		t.Error("expected 'Parent' group header in view")
+	}
+	if !strings.Contains(view, "To Do (2)") {
+		t.Error("expected 'To Do (2)' group header in view")
+	}
+	if !strings.Contains(view, "Done (1)") {
+		t.Error("expected 'Done (1)' group header in view")
+	}
+}

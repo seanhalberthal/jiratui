@@ -8,7 +8,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Saved JQL filters — save, edit, favourite, delete, and apply JQL queries from a filter manager (`f` from home/sprint/board views)
+- Copy JQL to clipboard (`x`) from filter manager
+- Refresh search results (`r`) to re-run the current JQL query
+
+### Fixed
+
+- UTF-8 label truncation in issue picker — multi-byte characters no longer produce garbled output
+- Filter duplicate name capped at 100 characters to prevent overflow
+
+### Changed
+
+- Status and type colour hashing unified to FNV-1a for better distribution
+
+## [0.1.7] — 2026-03-19
+
+### Added
+
+- Inline issue actions — assign (`a`), edit summary/priority (`e`), link issues (`l`), delete (`D`) from the issue view
+- Issue key navigation — jump between referenced issues via the issue picker (`i`)
+- Hash-based colour palettes — deterministic colours for user names, status badges, and issue types
+- Copy issue URL to clipboard (`x`) from issue view
+- Navigate to parent issue (`p`) from issue view
+
+## [0.1.6] — 2026-03-18
+
+### Added
+
+- Saved JQL filters — save, edit, duplicate, favourite, delete, and apply JQL queries from a filter manager (`f` from home/sprint/board views)
 - JQL autocompletion in filter editor (same engine as search view)
 - Default issue sort changed to `updated DESC` (most recently active first) for sprint and board views
 
@@ -17,10 +43,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - JQL parser and autocomplete engine extracted to `internal/jql` package (shared by search and filter views)
 - Filters keybind changed from `F` to `f`
 - "Save filter" option hidden in search results when results originated from a saved filter
-
-### Removed
-
-- "Copy JQL" keybind (`x`) removed from filter manager
 
 ## [0.1.5] — 2026-03-17
 

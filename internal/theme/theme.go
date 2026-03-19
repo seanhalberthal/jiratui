@@ -1,6 +1,7 @@
 package theme
 
 import (
+	"hash/fnv"
 	"strings"
 	"sync"
 
@@ -151,11 +152,9 @@ func StatusStyle(status string) lipgloss.Style {
 
 // hashColour returns a deterministic colour from a palette based on the name.
 func hashColour(name string, palette []lipgloss.AdaptiveColor) lipgloss.AdaptiveColor {
-	var h uint32
-	for _, c := range name {
-		h = h*31 + uint32(c)
-	}
-	return palette[h%uint32(len(palette))]
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	return palette[h.Sum32()%uint32(len(palette))]
 }
 
 // statusTodoColours — blue hue family: variations from sky to indigo.
@@ -237,16 +236,14 @@ var userColours = []lipgloss.AdaptiveColor{
 }
 
 // UserStyle returns a consistent colour style for a given name.
-// The same name always produces the same colour via hashing.
+// The same name always produces the same colour via FNV-1a hashing.
 func UserStyle(name string) lipgloss.Style {
 	if name == "" {
 		return StyleSubtle
 	}
-	var h uint32
-	for _, c := range name {
-		h = h*31 + uint32(c)
-	}
-	colour := userColours[h%uint32(len(userColours))]
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	colour := userColours[h.Sum32()%uint32(len(userColours))]
 	return lipgloss.NewStyle().Foreground(colour)
 }
 

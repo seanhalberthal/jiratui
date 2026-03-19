@@ -173,6 +173,75 @@ func TestUpdateNonExistent(t *testing.T) {
 	}
 }
 
+func TestDuplicate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// Add a filter.
+	f, err := filters.Add("My Filter", "status = Open")
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// Duplicate it.
+	dup, err := filters.Duplicate(f.ID)
+	if err != nil {
+		t.Fatalf("Duplicate: %v", err)
+	}
+	if dup.Name != "My Filter (copy)" {
+		t.Errorf("expected name 'My Filter (copy)', got %q", dup.Name)
+	}
+	if dup.JQL != "status = Open" {
+		t.Errorf("expected JQL 'status = Open', got %q", dup.JQL)
+	}
+	if dup.ID == f.ID {
+		t.Error("duplicated filter should have a different ID")
+	}
+	if dup.Favourite {
+		t.Error("duplicated filter should not be a favourite")
+	}
+
+	// Verify both exist on disk.
+	all, err := filters.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 filters, got %d", len(all))
+	}
+}
+
+func TestDuplicate_NotFound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	dup, err := filters.Duplicate("nonexistent")
+	if err != nil {
+		t.Fatalf("Duplicate: %v", err)
+	}
+	if dup.ID != "" {
+		t.Error("expected empty filter for nonexistent ID")
+	}
+}
+
+func TestDuplicate_DoesNotInheritFavourite(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	f, err := filters.Add("Fav Filter", "status = Open")
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := filters.ToggleFavourite(f.ID); err != nil {
+		t.Fatalf("ToggleFavourite: %v", err)
+	}
+
+	dup, err := filters.Duplicate(f.ID)
+	if err != nil {
+		t.Fatalf("Duplicate: %v", err)
+	}
+	if dup.Favourite {
+		t.Error("duplicated filter must not inherit Favourite flag")
+	}
+}
+
 func TestSortedDoesNotMutateInput(t *testing.T) {
 	input := []jira.SavedFilter{
 		{ID: "a", Name: "A", Favourite: false},

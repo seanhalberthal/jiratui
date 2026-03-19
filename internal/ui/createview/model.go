@@ -193,14 +193,26 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.spinner.Tick, m.fetchProjects())
 }
 
-// Done returns true when the issue has been created.
-func (m Model) Done() bool { return m.done }
+// Done returns true (once) when the issue has been created.
+func (m *Model) Done() bool {
+	d := m.done
+	m.done = false
+	return d
+}
 
-// Quit returns true when the user cancelled.
-func (m Model) Quit() bool { return m.quit }
+// Quit returns true (once) when the user cancelled.
+func (m *Model) Quit() bool {
+	q := m.quit
+	m.quit = false
+	return q
+}
 
-// CreatedKey returns the key of the newly created issue.
-func (m Model) CreatedKey() string { return m.createdKey }
+// CreatedKey returns the key of the newly created issue (once).
+func (m *Model) CreatedKey() string {
+	k := m.createdKey
+	m.createdKey = ""
+	return k
+}
 
 // InputActive returns true when a text input is focused.
 func (m Model) InputActive() bool {

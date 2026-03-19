@@ -2787,3 +2787,43 @@ func TestApp_ErrMsg_SanitisesURLs(t *testing.T) {
 		t.Errorf("expected URL sanitised in ErrMsg, got %q", a.err.Error())
 	}
 }
+
+func TestApp_FilterDuplicatedMsg_SetsStatus(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewFilters
+
+	dup := jira.SavedFilter{ID: "abc", Name: "My Filter (copy)", JQL: "status = Open"}
+	model, _ := app.Update(FilterDuplicatedMsg{Filter: dup})
+	a := model.(App)
+
+	if a.statusMsg == "" {
+		t.Error("expected status message after duplicate")
+	}
+	if !strings.Contains(a.statusMsg, "duplicated") {
+		t.Errorf("expected 'duplicated' in status, got %q", a.statusMsg)
+	}
+}
+
+func TestApp_FiltersKey_ClearsStaleState(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSprint
+	app.savedFilters = []jira.SavedFilter{{ID: "x", Name: "Test", JQL: "status = Open"}}
+
+	// Put filter into a dirty edit state.
+	app.filter.StartAdd("stale query")
+
+	// Press 'f' to open filters — should call Reset().
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	a := model.(App)
+
+	if a.active != viewFilters {
+		t.Fatalf("expected viewFilters, got %d", a.active)
+	}
+	if a.filter.InputActive() {
+		t.Error("expected InputActive false after Reset — stale edit state should be cleared")
+	}
+}
