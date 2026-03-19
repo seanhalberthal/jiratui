@@ -190,3 +190,8 @@ type FilterSavedMsg struct {
 type FilterDeletedMsg struct {
 	ID string
 }
+
+// FilterDuplicatedMsg is sent after a filter is successfully duplicated.
+type FilterDuplicatedMsg struct {
+	Filter jira.SavedFilter
+}

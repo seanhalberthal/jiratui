@@ -19,6 +19,7 @@ import (
 type IssueRef struct {
 	Key   string
 	Label string // e.g., "parent", "child — Fix login bug", "in description"
+	Group string // e.g., "Parent", "To Do (3)", "In Progress (1)", "Done (2)", "Description", "Comments"
 }
 
 var issueKeyExtractRe = regexp.MustCompile(`[A-Z][A-Z0-9]*-[0-9]+`)
@@ -145,14 +146,6 @@ func (m Model) IssueKeys() []IssueRef {
 	seen := map[string]bool{m.issue.Key: true}
 	var refs []IssueRef
 
-	add := func(key, label string) {
-		if key == "" || seen[key] {
-			return
-		}
-		seen[key] = true
-		refs = append(refs, IssueRef{Key: key, Label: label})
-	}
-
 	// Parent.
 	if m.issue.ParentKey != "" {
 		label := "parent"
@@ -162,25 +155,59 @@ func (m Model) IssueKeys() []IssueRef {
 				label += " (" + m.issue.ParentType + ")"
 			}
 		}
-		add(m.issue.ParentKey, label)
+		seen[m.issue.ParentKey] = true
+		refs = append(refs, IssueRef{Key: m.issue.ParentKey, Label: label, Group: "Parent"})
 	}
 
-	// Children.
-	for _, child := range m.children {
-		add(child.Key, "child — "+child.Summary)
+	// Children — grouped by status category (To Do → In Progress → Done).
+	if len(m.children) > 0 {
+		var todo, inProg, done []jira.ChildIssue
+		for _, child := range m.children {
+			switch theme.StatusCategory(child.Status) {
+			case 2, 3:
+				done = append(done, child)
+			case 1:
+				inProg = append(inProg, child)
+			default:
+				todo = append(todo, child)
+			}
+		}
+		addGroup := func(group string, children []jira.ChildIssue) {
+			for _, child := range children {
+				if key := child.Key; key != "" && !seen[key] {
+					seen[key] = true
+					refs = append(refs, IssueRef{
+						Key:   key,
+						Label: child.Summary + "  " + child.Status,
+						Group: group,
+					})
+				}
+			}
+		}
+		addGroup(fmt.Sprintf("To Do (%d)", len(todo)), todo)
+		addGroup(fmt.Sprintf("In Progress (%d)", len(inProg)), inProg)
+		addGroup(fmt.Sprintf("Done (%d)", len(done)), done)
 	}
 
 	// Keys in description.
+	descGroup := "Description"
 	if m.issue.Description != "" {
 		for _, key := range issueKeyExtractRe.FindAllString(m.issue.Description, -1) {
-			add(key, "in description")
+			if key != "" && !seen[key] {
+				seen[key] = true
+				refs = append(refs, IssueRef{Key: key, Label: "in description", Group: descGroup})
+			}
 		}
 	}
 
 	// Keys in comments.
+	commentGroup := "Comments"
 	for _, c := range m.issue.Comments {
 		for _, key := range issueKeyExtractRe.FindAllString(c.Body, -1) {
-			add(key, "in comments")
+			if key != "" && !seen[key] {
+				seen[key] = true
+				refs = append(refs, IssueRef{Key: key, Label: "in comments", Group: commentGroup})
+			}
 		}
 	}
 
@@ -332,19 +359,33 @@ func (m Model) renderContent() string {
 			}
 		}
 
-		// Progress bar.
+		// Progress bar — three segments: done (green), in progress (amber), to do (grey).
 		total := len(m.children)
 		doneCount := len(done)
+		progCount := len(inProgress)
 		barWidth := 20
-		filled := 0
+		var doneBars, progBars, todoBars int
 		if total > 0 {
-			filled = (doneCount * barWidth) / total
+			doneBars = (doneCount * barWidth) / total
+			progBars = (progCount * barWidth) / total
+			// Ensure at least 1 bar for non-empty segments that rounded to 0.
+			if progCount > 0 && progBars == 0 {
+				progBars = 1
+			}
+			if doneCount > 0 && doneBars == 0 {
+				doneBars = 1
+			}
+			todoBars = barWidth - doneBars - progBars
+			if todoBars < 0 {
+				todoBars = 0
+			}
+		} else {
+			todoBars = barWidth
 		}
-		bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-		progressLine := fmt.Sprintf("%d/%d done  %s",
-			doneCount, total,
-			theme.StyleStatusDone.Render(bar[:filled])+theme.StyleSubtle.Render(bar[filled:]),
-		)
+		bar := theme.StyleStatusDone.Render(strings.Repeat("█", doneBars)) +
+			theme.StyleStatusInProgress.Render(strings.Repeat("█", progBars)) +
+			theme.StyleSubtle.Render(strings.Repeat("░", todoBars))
+		progressLine := fmt.Sprintf("%d/%d done  %s", doneCount, total, bar)
 		b.WriteString(progressLine)
 		b.WriteString("\n")
 

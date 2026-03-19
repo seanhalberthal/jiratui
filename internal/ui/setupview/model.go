@@ -299,11 +299,19 @@ func (m *Model) GoToConfirm() {
 	m.step = stepConfirm
 }
 
-// Done returns true when the wizard has completed successfully.
-func (m Model) Done() bool { return m.done }
+// Done returns true (once) when the wizard has completed successfully.
+func (m *Model) Done() bool {
+	d := m.done
+	m.done = false
+	return d
+}
 
-// Quit returns true when the user chose to exit.
-func (m Model) Quit() bool { return m.quit }
+// Quit returns true (once) when the user chose to exit.
+func (m *Model) Quit() bool {
+	q := m.quit
+	m.quit = false
+	return q
+}
 
 // InputActive returns true when a text input is focused.
 func (m Model) InputActive() bool {

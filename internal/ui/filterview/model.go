@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/seanhalberthal/jiru/internal/filters"
 	"github.com/seanhalberthal/jiru/internal/jira"
 	"github.com/seanhalberthal/jiru/internal/jql"
 	"github.com/seanhalberthal/jiru/internal/theme"
@@ -30,7 +32,7 @@ type Model struct {
 	width     int
 	height    int
 	nameInput textinput.Model
-	jqlInput  textinput.Model
+	jqlInput  textarea.Model
 
 	// editID is non-empty when editing an existing filter.
 	editID string
@@ -41,11 +43,13 @@ type Model struct {
 	compIndex   int
 
 	// Sentinels — read-once by the parent.
-	applied         *jira.SavedFilter
-	saveRequested   *saveRequest
-	deleteRequested string
-	favouriteID     string
-	dismissed       bool
+	applied            *jira.SavedFilter
+	saveRequested      *saveRequest
+	deleteRequested    string
+	favouriteID        string
+	duplicateRequested string // ID of filter to duplicate.
+	copyJQLRequested   string // JQL string to copy to clipboard.
+	dismissed          bool
 }
 
 type saveRequest struct {
@@ -58,11 +62,14 @@ type saveRequest struct {
 func New() Model {
 	ni := textinput.New()
 	ni.Placeholder = "Filter name"
-	ni.CharLimit = 100
+	ni.CharLimit = filters.MaxFilterNameLen
 
-	ji := textinput.New()
+	ji := textarea.New()
 	ji.Placeholder = "JQL query"
 	ji.CharLimit = 500
+	ji.ShowLineNumbers = false
+	ji.SetHeight(3)
+	ji.Blur() // Must not start focused — prevents stale cursor blink state.
 
 	return Model{
 		nameInput: ni,
@@ -99,7 +106,7 @@ func (m *Model) SetSize(width, height int) {
 	m.width = width
 	m.height = height
 	m.nameInput.Width = width/2 - 6
-	m.jqlInput.Width = width/2 - 6
+	m.jqlInput.SetWidth(width/2 - 6)
 }
 
 // InputActive returns true whenever a text input is focused (suppresses global keys).
@@ -147,11 +154,45 @@ func (m *Model) FavouriteRequested() string {
 	return id
 }
 
+// DuplicateRequested returns the ID of a filter to duplicate (once).
+func (m *Model) DuplicateRequested() string {
+	id := m.duplicateRequested
+	m.duplicateRequested = ""
+	return id
+}
+
+// CopyJQLRequested returns the JQL to copy to clipboard (once).
+func (m *Model) CopyJQLRequested() string {
+	jql := m.copyJQLRequested
+	m.copyJQLRequested = ""
+	return jql
+}
+
 // Dismissed returns true (once) when the user closed the view without acting.
 func (m *Model) Dismissed() bool {
 	d := m.dismissed
 	m.dismissed = false
 	return d
+}
+
+// Reset restores the model to a clean list state.
+// Called by the parent when entering the filter view to prevent stale state.
+func (m *Model) Reset() {
+	m.state = stateList
+	m.editID = ""
+	m.nameInput.SetValue("")
+	m.nameInput.Blur()
+	m.jqlInput.SetValue("")
+	m.jqlInput.Blur()
+	m.completions = nil
+	m.compIndex = -1
+	m.applied = nil
+	m.saveRequested = nil
+	m.deleteRequested = ""
+	m.favouriteID = ""
+	m.duplicateRequested = ""
+	m.copyJQLRequested = ""
+	m.dismissed = false
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
@@ -221,6 +262,14 @@ func (m Model) updateList(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 	case "d":
 		if len(m.filters) > 0 {
+			m.duplicateRequested = m.filters[m.cursor].ID
+		}
+	case "x":
+		if len(m.filters) > 0 {
+			m.copyJQLRequested = m.filters[m.cursor].JQL
+		}
+	case "D":
+		if len(m.filters) > 0 {
 			m.state = stateConfirmDelete
 		}
 	}
@@ -241,10 +290,10 @@ func (m Model) updateEditName(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if strings.TrimSpace(m.nameInput.Value()) != "" {
 			m.state = stateEditQuery
 			m.nameInput.Blur()
-			m.jqlInput.Focus()
+			cmd := m.jqlInput.Focus()
 			// Compute initial completions for the JQL input.
 			m.recalcCompletions()
-			return m, textinput.Blink
+			return m, cmd
 		}
 	default:
 		var cmd tea.Cmd
@@ -316,7 +365,7 @@ func (m Model) updateEditQuery(msg tea.KeyMsg) (Model, tea.Cmd) {
 }
 
 func (m *Model) recalcCompletions() {
-	ctx := jql.Parse(m.jqlInput.Value(), m.jqlInput.Position())
+	ctx := jql.Parse(m.jqlInput.Value(), m.jqlInput.LineInfo().CharOffset)
 	m.completions = jql.Match(ctx, m.values)
 	m.compIndex = -1
 }
@@ -325,7 +374,7 @@ func (m *Model) acceptCompletion() {
 	if m.compIndex < 0 || m.compIndex >= len(m.completions) {
 		return
 	}
-	newValue, newCursor := jql.Accept(m.jqlInput.Value(), m.jqlInput.Position(), m.completions[m.compIndex])
+	newValue, newCursor := jql.Accept(m.jqlInput.Value(), m.jqlInput.LineInfo().CharOffset, m.completions[m.compIndex])
 	m.jqlInput.SetValue(newValue)
 	m.jqlInput.SetCursor(newCursor)
 	m.completions = nil
@@ -431,8 +480,9 @@ func (m Model) renderList() string {
 	help := theme.StyleHelpKey.Render("enter") + " " + theme.StyleHelpDesc.Render("apply") + "  " +
 		theme.StyleHelpKey.Render("n") + " " + theme.StyleHelpDesc.Render("new") + "  " +
 		theme.StyleHelpKey.Render("e") + " " + theme.StyleHelpDesc.Render("edit") + "  " +
+		theme.StyleHelpKey.Render("d") + " " + theme.StyleHelpDesc.Render("duplicate") + "  " +
 		theme.StyleHelpKey.Render("f") + " " + theme.StyleHelpDesc.Render("favourite") + "  " +
-		theme.StyleHelpKey.Render("d") + " " + theme.StyleHelpDesc.Render("delete") + "  " +
+		theme.StyleHelpKey.Render("D") + " " + theme.StyleHelpDesc.Render("delete") + "  " +
 		theme.StyleHelpKey.Render("esc") + " " + theme.StyleHelpDesc.Render("close")
 
 	content := lipgloss.JoinVertical(lipgloss.Left,
@@ -457,7 +507,19 @@ func (m Model) renderEditBox(title, input, popup, hint, help string) string {
 	}
 	parts = append(parts, "", help)
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
-	return m.centreBox(content)
+
+	// Use a fixed-height box for edit states so the centered position stays
+	// stable regardless of content changes (popup appearing, text wrapping).
+	boxHeight := max(m.height*4/10, 12)
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.ColourPrimary).
+		Padding(1, 2).
+		Width(m.width / 2).
+		Height(boxHeight)
+
+	box := boxStyle.Render(content)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 func (m Model) centreBox(content string) string {

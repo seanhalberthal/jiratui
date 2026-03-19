@@ -1,6 +1,7 @@
 package issueview
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -763,5 +764,61 @@ func TestNoIssueView(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "No issue selected") {
 		t.Errorf("expected 'No issue selected', got %q", view)
+	}
+}
+
+func TestIssueKeys_GroupField(t *testing.T) {
+	m := New()
+	m = m.SetSize(80, 24)
+	m = m.SetIssue(jira.Issue{
+		Key: "PROJ-5", Summary: "Main", Status: "To Do",
+		ParentKey: "PROJ-1", ParentSummary: "Parent Issue",
+	})
+	m = m.SetChildren([]jira.ChildIssue{
+		{Key: "PROJ-10", Summary: "Todo child", Status: "To Do"},
+		{Key: "PROJ-11", Summary: "IP child", Status: "In Progress"},
+		{Key: "PROJ-12", Summary: "Done child", Status: "Done"},
+	})
+
+	refs := m.IssueKeys()
+	groups := map[string]string{}
+	for _, r := range refs {
+		groups[r.Key] = r.Group
+	}
+
+	if groups["PROJ-1"] != "Parent" {
+		t.Errorf("expected Group 'Parent' for parent, got %q", groups["PROJ-1"])
+	}
+	if groups["PROJ-10"] != "To Do (1)" {
+		t.Errorf("expected Group 'To Do (1)', got %q", groups["PROJ-10"])
+	}
+	if groups["PROJ-11"] != "In Progress (1)" {
+		t.Errorf("expected Group 'In Progress (1)', got %q", groups["PROJ-11"])
+	}
+	if groups["PROJ-12"] != "Done (1)" {
+		t.Errorf("expected Group 'Done (1)', got %q", groups["PROJ-12"])
+	}
+}
+
+func TestProgressBar_SmallSegmentGetsMinimumBar(t *testing.T) {
+	m := New()
+	m = m.SetSize(80, 30)
+	m = m.SetIssue(jira.Issue{Key: "PROJ-1", Summary: "Parent", Status: "Open"})
+
+	// 1 in-progress out of 20 — would round to 0 bars without the guard.
+	children := make([]jira.ChildIssue, 20)
+	children[0] = jira.ChildIssue{Key: "PROJ-2", Summary: "IP", Status: "In Progress"}
+	for i := 1; i < 20; i++ {
+		children[i] = jira.ChildIssue{
+			Key:     fmt.Sprintf("PROJ-%d", i+2),
+			Summary: "done",
+			Status:  "Done",
+		}
+	}
+	m = m.SetChildren(children)
+
+	content := m.View()
+	if !strings.Contains(content, "19/20 done") {
+		t.Error("expected '19/20 done' in progress bar")
 	}
 }

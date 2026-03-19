@@ -71,6 +71,43 @@ func newID() string {
 	return hex.EncodeToString(b)
 }
 
+// MaxFilterNameLen is the maximum length of a filter name.
+// Shared with the UI input's CharLimit.
+const MaxFilterNameLen = 100
+
+// Duplicate creates a copy of an existing filter with "(copy)" appended to the name.
+// The duplicate is never marked as a favourite regardless of the source.
+func Duplicate(id string) (jira.SavedFilter, error) {
+	all, err := Load()
+	if err != nil {
+		return jira.SavedFilter{}, err
+	}
+	var source *jira.SavedFilter
+	for i, f := range all {
+		if f.ID == id {
+			source = &all[i]
+			break
+		}
+	}
+	if source == nil {
+		return jira.SavedFilter{}, nil // Not found — no-op.
+	}
+	now := time.Now()
+	name := source.Name + " (copy)"
+	if len(name) > MaxFilterNameLen {
+		name = name[:MaxFilterNameLen]
+	}
+	dup := jira.SavedFilter{
+		ID:        newID(),
+		Name:      name,
+		JQL:       source.JQL,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	all = append(all, dup)
+	return dup, save(all)
+}
+
 // Add creates a new saved filter and persists it.
 func Add(name, jql string) (jira.SavedFilter, error) {
 	filters, err := Load()

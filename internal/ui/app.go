@@ -346,6 +346,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, a.keys.Filters) &&
 			(a.active == viewHome || a.active == viewSprint || a.active == viewBoard) &&
 			!a.search.Visible():
+			a.filter.Reset()
 			a.filter.SetFilters(a.savedFilters)
 			a.filterOrigin = a.active
 			a.previousView = a.active
@@ -651,20 +652,18 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case FilterSavedMsg:
-		// Reload from disk to get canonical state.
-		if fs, err := filters.Load(); err == nil {
-			a.savedFilters = filters.Sorted(fs)
-		}
-		a.filter.SetFilters(a.savedFilters)
+		reloadSavedFilters(&a)
 		a.statusMsg = fmt.Sprintf("Filter %q saved", msg.Filter.Name)
 		return a, nil
 
 	case FilterDeletedMsg:
-		if fs, err := filters.Load(); err == nil {
-			a.savedFilters = filters.Sorted(fs)
-		}
-		a.filter.SetFilters(a.savedFilters)
+		reloadSavedFilters(&a)
 		a.statusMsg = "Filter deleted"
+		return a, nil
+
+	case FilterDuplicatedMsg:
+		reloadSavedFilters(&a)
+		a.statusMsg = fmt.Sprintf("Filter %q duplicated", msg.Filter.Name)
 		return a, nil
 
 	case CommentAddedMsg:
@@ -909,6 +908,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Copy JQL to clipboard.
+		if jql := a.filter.CopyJQLRequested(); jql != "" {
+			if err := copyToClipboard(jql); err != nil {
+				a.err = err
+			} else {
+				a.statusMsg = "JQL copied to clipboard"
+			}
+		}
+
+		// Duplicate a filter.
+		if id := a.filter.DuplicateRequested(); id != "" {
+			dup, err := filters.Duplicate(id)
+			if err != nil {
+				a.err = err
+			} else if dup.ID != "" {
+				return a, func() tea.Msg { return FilterDuplicatedMsg{Filter: dup} }
+			}
+		}
+
 		// Toggle favourite.
 		if id := a.filter.FavouriteRequested(); id != "" {
 			if err := filters.ToggleFavourite(id); err != nil {
@@ -938,6 +956,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Batch(cmd, a.searchJQL(q))
 		}
 		if jql := a.search.SaveFilter(); jql != "" {
+			a.filter.Reset()
 			a.filter.SetFilters(a.savedFilters)
 			a.filter.StartAdd(jql)
 			a.filterOrigin = a.active
@@ -1048,6 +1067,7 @@ func (a App) View() string {
 				extra = append(extra, footerBinding{"s", "save filter"})
 			}
 			extra = append(extra,
+				footerBinding{"r", "refresh"},
 				footerBinding{"/", "filter"},
 				footerBinding{"esc", "back"},
 			)
@@ -1084,8 +1104,9 @@ func (a App) View() string {
 				footerBinding{"enter", "apply"},
 				footerBinding{"n", "new"},
 				footerBinding{"e", "edit"},
+				footerBinding{"d", "duplicate"},
 				footerBinding{"f", "favourite"},
-				footerBinding{"d", "delete"},
+				footerBinding{"D", "delete"},
 				footerBinding{"x", "copy JQL"},
 				footerBinding{"esc", "back"},
 			)
@@ -1763,6 +1784,14 @@ func openBrowser(url string) {
 		return
 	}
 	_ = cmd.Start()
+}
+
+// reloadSavedFilters refreshes the in-memory filter list from disk.
+func reloadSavedFilters(a *App) {
+	if fs, err := filters.Load(); err == nil {
+		a.savedFilters = filters.Sorted(fs)
+	}
+	a.filter.SetFilters(a.savedFilters)
 }
 
 func copyToClipboard(text string) error {

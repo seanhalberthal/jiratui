@@ -210,6 +210,34 @@ func TestSetStatusCategoryMap(t *testing.T) {
 	}
 }
 
+func TestUserStyle_EmptyName(t *testing.T) {
+	s := UserStyle("")
+	// Should return subtle style, not panic.
+	_ = s.Render("test")
+}
+
+func TestUserStyle_DifferentColoursForSimilarNames(t *testing.T) {
+	// These two names collided with the old h*31+c hash (both → index 3).
+	s1 := UserStyle("Eldan Halberthal")
+	s2 := UserStyle("Oran Halberthal")
+
+	// Extract foreground colours — they should differ.
+	fg1 := s1.GetForeground()
+	fg2 := s2.GetForeground()
+
+	if fg1 == fg2 {
+		t.Errorf("expected different colours for 'Eldan Halberthal' and 'Oran Halberthal', both got %v", fg1)
+	}
+}
+
+func TestUserStyle_Deterministic(t *testing.T) {
+	s1 := UserStyle("Alice")
+	s2 := UserStyle("Alice")
+	if s1.GetForeground() != s2.GetForeground() {
+		t.Error("same name should always produce the same colour")
+	}
+}
+
 func TestSetStatusCategoryMap_NilClearsOverride(t *testing.T) {
 	SetStatusCategoryMap(map[string]int{"Foo": 2})
 	if StatusCategory("Foo") != 2 {

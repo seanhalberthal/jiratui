@@ -185,8 +185,8 @@ func TestDeleteFilter_Confirm(t *testing.T) {
 	m.SetSize(80, 24)
 	m.SetFilters(sampleFilters())
 
-	// Press 'd' to start delete.
-	m, _ = m.Update(key("d"))
+	// Press 'D' to start delete.
+	m, _ = m.Update(key("D"))
 	if m.state != stateConfirmDelete {
 		t.Fatalf("expected stateConfirmDelete, got %d", m.state)
 	}
@@ -208,7 +208,7 @@ func TestDeleteFilter_Cancel(t *testing.T) {
 	m.SetSize(80, 24)
 	m.SetFilters(sampleFilters())
 
-	m, _ = m.Update(key("d"))
+	m, _ = m.Update(key("D"))
 	m, _ = m.Update(key("n"))
 	if m.state != stateList {
 		t.Errorf("expected stateList after cancel, got %d", m.state)
@@ -636,21 +636,30 @@ func TestEditQuery_CompletionsReappearAfterSpace(t *testing.T) {
 	}
 }
 
-func TestXKey_NoOp(t *testing.T) {
+func TestCopyJQL(t *testing.T) {
 	m := New()
 	m.SetSize(80, 24)
 	m.SetFilters(sampleFilters())
 
 	m, _ = m.Update(key("x"))
-	// Should remain in list state with no side effects.
-	if m.state != stateList {
-		t.Errorf("expected stateList after x, got %d", m.state)
+	jql := m.CopyJQLRequested()
+	if jql != "type = Bug AND assignee = me" {
+		t.Errorf("expected first filter's JQL, got %q", jql)
 	}
-	if m.Dismissed() {
-		t.Error("x should not dismiss")
+	// One-shot.
+	if m.CopyJQLRequested() != "" {
+		t.Error("CopyJQLRequested() should be empty on second call")
 	}
-	if m.Applied() != nil {
-		t.Error("x should not apply a filter")
+}
+
+func TestCopyJQL_EmptyList(t *testing.T) {
+	m := New()
+	m.SetSize(80, 24)
+	m.SetFilters(nil)
+
+	m, _ = m.Update(key("x"))
+	if jql := m.CopyJQLRequested(); jql != "" {
+		t.Errorf("expected empty on empty list, got %q", jql)
 	}
 }
 
@@ -667,5 +676,118 @@ func TestEditQuery_BackspaceRecalculatesCompletions(t *testing.T) {
 	m, _ = m.Update(keyType(tea.KeyBackspace))
 	if len(m.completions) == 0 {
 		t.Error("expected completions to reappear after backspace")
+	}
+}
+
+// --- Duplicate filter tests ---
+
+func TestDuplicateFilter(t *testing.T) {
+	m := New()
+	m.SetSize(80, 24)
+	m.SetFilters(sampleFilters())
+
+	// Press 'd' to duplicate selected filter.
+	m, _ = m.Update(key("d"))
+	id := m.DuplicateRequested()
+	if id != "aaa" {
+		t.Errorf("expected duplicate ID 'aaa', got %q", id)
+	}
+	// One-shot.
+	if m.DuplicateRequested() != "" {
+		t.Error("DuplicateRequested() should be empty on second call")
+	}
+}
+
+func TestDuplicateFilter_SecondItem(t *testing.T) {
+	m := New()
+	m.SetSize(80, 24)
+	m.SetFilters(sampleFilters())
+
+	m, _ = m.Update(key("j")) // Move to second item.
+	m, _ = m.Update(key("d"))
+	id := m.DuplicateRequested()
+	if id != "bbb" {
+		t.Errorf("expected duplicate ID 'bbb', got %q", id)
+	}
+}
+
+func TestDuplicateFilter_EmptyList(t *testing.T) {
+	m := New()
+	m.SetSize(80, 24)
+	m.SetFilters(nil)
+
+	m, _ = m.Update(key("d"))
+	if id := m.DuplicateRequested(); id != "" {
+		t.Errorf("expected empty duplicate ID on empty list, got %q", id)
+	}
+}
+
+// --- Filter creation back-out regression tests ---
+
+func TestNewFilterBackOut_ReturnsToCleanList(t *testing.T) {
+	m := New()
+	m.SetSize(80, 24)
+	m.SetFilters(sampleFilters())
+
+	// Start new filter.
+	m, _ = m.Update(key("n"))
+	if m.state != stateEditName {
+		t.Fatalf("expected stateEditName, got %d", m.state)
+	}
+
+	// Back out.
+	m, _ = m.Update(keyType(tea.KeyEscape))
+	if m.state != stateList {
+		t.Errorf("expected stateList after backing out, got %d", m.state)
+	}
+	if m.InputActive() {
+		t.Error("InputActive should be false after backing out to list")
+	}
+	// Should NOT be dismissed — user is back in the list.
+	if m.Dismissed() {
+		t.Error("should not dismiss when backing out of new filter to list")
+	}
+}
+
+func TestReset_ClearsAllState(t *testing.T) {
+	m := New()
+	m.SetSize(80, 24)
+	m.SetFilters(sampleFilters())
+
+	// Enter edit mode and partially fill inputs.
+	m, _ = m.Update(key("n"))
+	for _, c := range "partial" {
+		m, _ = m.Update(key(string(c)))
+	}
+
+	// Reset.
+	m.Reset()
+
+	if m.state != stateList {
+		t.Errorf("expected stateList after Reset, got %d", m.state)
+	}
+	if m.InputActive() {
+		t.Error("InputActive should be false after Reset")
+	}
+	if m.nameInput.Value() != "" {
+		t.Errorf("expected empty name after Reset, got %q", m.nameInput.Value())
+	}
+	if m.jqlInput.Value() != "" {
+		t.Errorf("expected empty JQL after Reset, got %q", m.jqlInput.Value())
+	}
+}
+
+func TestNewFilterBackOut_ThenDismiss(t *testing.T) {
+	m := New()
+	m.SetSize(80, 24)
+	m.SetFilters(sampleFilters())
+
+	// Start new filter, back out to list, then dismiss.
+	m, _ = m.Update(key("n"))
+	m, _ = m.Update(keyType(tea.KeyEscape)) // Back to list.
+	m, _ = m.Update(keyType(tea.KeyEscape)) // Dismiss.
+
+	if !m.Dismissed() {
+		t.Error("expected Dismissed() after esc from list")
 	}
 }

@@ -363,6 +363,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.pendingSave = m.query
 				return m, nil
 			}
+			if keyMsg.String() == "r" && m.query != "" {
+				m.pendingQuery = m.query
+				return m, nil
+			}
 			if key.Matches(keyMsg, m.openKeys) {
 				if item, ok := m.results.SelectedItem().(issuedelegate.Item); ok {
 					iss := item.Issue

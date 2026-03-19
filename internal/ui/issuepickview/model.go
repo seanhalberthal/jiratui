@@ -136,21 +136,37 @@ func (m Model) View() string {
 	// Truncate the plain-text label before styling to avoid slicing ANSI escape sequences.
 	maxContentWidth := m.width*6/10 - 8
 
+	lastGroup := ""
 	for i, r := range visible {
 		idx := m.offset + i
-		cursor := "  "
+
+		// Group header — render when the group changes.
+		if r.Group != "" && r.Group != lastGroup {
+			if lastGroup != "" {
+				b.WriteByte('\n') // Blank line between groups.
+			}
+			b.WriteString("  ")
+			b.WriteString(theme.StyleTitle.Render(r.Group))
+			b.WriteByte('\n')
+			lastGroup = r.Group
+		}
+
+		cursor := "    "
 		style := lipgloss.NewStyle()
 		if idx == m.cursor {
-			cursor = theme.StyleKey.Render("> ")
+			cursor = "  " + theme.StyleKey.Render("> ")
 			style = style.Bold(true)
 		}
 
 		label := r.Label
 		// key + "  " separator; estimate key width from plain text.
 		keyWidth := len(r.Key) + 2
-		maxLabel := maxContentWidth - keyWidth - 2 // 2 for cursor prefix
-		if maxLabel > 0 && len(label) > maxLabel {
-			label = label[:maxLabel-1] + "…"
+		maxLabel := maxContentWidth - keyWidth - 4 // 4 for cursor prefix
+		if maxLabel > 0 {
+			runes := []rune(label)
+			if len(runes) > maxLabel {
+				label = string(runes[:maxLabel-1]) + "…"
+			}
 		}
 
 		line := cursor + style.Render(fmt.Sprintf("%s  %s", theme.StyleKey.Render(r.Key), theme.StyleSubtle.Render(label)))
