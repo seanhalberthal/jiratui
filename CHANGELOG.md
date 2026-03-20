@@ -8,16 +8,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Board view for search results — press `b` from JQL search or saved filter results to view issues in a kanban board grouped by status
+
+### Changed
+
+- Replaced jira-cli dependency with a custom HTTP API client (`internal/api/`)
+- Board issue loading (no active sprint) now uses v3 JQL search with the board's filter instead of the Agile v1 API, which had an undocumented truncation limit on Jira Cloud (~1000 issues)
+- v3 JQL search requests specific fields instead of `*all` for better pagination reliability and performance
+- Configuration now resolves from environment variables and profiles.yml only — removed zsh config file scanning and jira-cli config fallback
+- Config and filter paths now respect `XDG_CONFIG_HOME` (defaults to `~/.config/jiru/`)
+- Renamed `profiles.yaml` → `profiles.yml` and `filters.yaml` → `filters.yml`
+
+### Fixed
+
+- Board issue loading stuck at ~1000–1100 issues on Jira Cloud due to Agile v1 API truncation
+- Cursor loop detection for v3 JQL pagination (known Jira Cloud bug where `nextPageToken` repeats)
+- Loading indicator now shows consistently during progressive pagination
+
+## [0.1.9] — 2026-03-20
+
+### Added
+
 - Named profiles — multiple Jira instances via `--profile <name>` flag or `P` in the TUI, with per-profile keychain storage
 - CLI subcommands — `jiru get`, `jiru search`, `jiru list`, `jiru boards` for JSON output
 - Profile management view (`P`) — create, switch, and delete profiles from the TUI
 - Edit issue view (`e` from issue view) — edit summary and priority inline
-- Auto-migration from legacy `config.env` to `profiles.yaml` on first run
+- Auto-migration from legacy `config.env` to `profiles.yml` on first run
 
 ### Changed
 
-- Config storage migrated from `~/.config/jiru/config.env` to `~/.config/jiru/profiles.yaml`
-- `ResetConfig` now cleans up profiles.yaml, all profile keyring entries, and legacy config.env
+- Config storage migrated from `~/.config/jiru/config.env` to `~/.config/jiru/profiles.yml`
+- `ResetConfig` now cleans up profiles.yml, all profile keyring entries, and legacy config.env
 
 ### Fixed
 

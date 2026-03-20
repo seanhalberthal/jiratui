@@ -101,6 +101,21 @@ func (c *column) ensureVisible() {
 	}
 }
 
+// setCursor sets the cursor to the given position, clamping to bounds, and
+// adjusts the scroll offset so the cursor is visible.
+func (c *column) setCursor(pos int) {
+	if len(c.issues) == 0 {
+		c.cursor = 0
+		c.offset = 0
+		return
+	}
+	c.cursor = min(pos, len(c.issues)-1)
+	if c.cursor < 0 {
+		c.cursor = 0
+	}
+	c.ensureVisible()
+}
+
 // clampCursor ensures the cursor is within bounds (e.g., after filtering).
 func (c *column) clampCursor() {
 	if len(c.issues) == 0 {

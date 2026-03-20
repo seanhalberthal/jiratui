@@ -9,6 +9,7 @@ import (
 
 func TestAddAndLoad(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 
 	f, err := filters.Add("My filter", "assignee = currentUser()")
@@ -32,6 +33,7 @@ func TestAddAndLoad(t *testing.T) {
 }
 
 func TestLoadEmptyWhenMissing(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 	fs, err := filters.Load()
 	if err != nil {
@@ -43,6 +45,7 @@ func TestLoadEmptyWhenMissing(t *testing.T) {
 }
 
 func TestUpdate(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	f, err := filters.Add("Original", "status = Open")
@@ -74,6 +77,7 @@ func TestUpdate(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	f1, _ := filters.Add("First", "a = b")
@@ -97,6 +101,7 @@ func TestDelete(t *testing.T) {
 }
 
 func TestToggleFavourite(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	f, _ := filters.Add("Test", "x = y")
@@ -126,6 +131,7 @@ func TestToggleFavourite(t *testing.T) {
 }
 
 func TestSorted(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	f1, _ := filters.Add("Older", "a = b")
@@ -150,6 +156,7 @@ func TestSorted(t *testing.T) {
 
 func TestSortedNewerFirst(t *testing.T) {
 	// Both non-favourite — newer should come first.
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	_, _ = filters.Add("Older", "a = b")
@@ -164,6 +171,7 @@ func TestSortedNewerFirst(t *testing.T) {
 }
 
 func TestUpdateNonExistent(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	// Should be a no-op, not an error.
@@ -174,6 +182,7 @@ func TestUpdateNonExistent(t *testing.T) {
 }
 
 func TestDuplicate(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	// Add a filter.
@@ -211,6 +220,7 @@ func TestDuplicate(t *testing.T) {
 }
 
 func TestDuplicate_NotFound(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	dup, err := filters.Duplicate("nonexistent")
@@ -223,6 +233,7 @@ func TestDuplicate_NotFound(t *testing.T) {
 }
 
 func TestDuplicate_DoesNotInheritFavourite(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	f, err := filters.Add("Fav Filter", "status = Open")

@@ -47,6 +47,7 @@ type stubClient struct {
 	meErr        error
 	sprintIssues []jira.Issue
 	sprintIssErr error
+	sprintTotal  int // When set, SprintIssuesPage reports this as Total (simulates Agile truncation).
 	issue        *jira.Issue
 	issueErr     error
 	boards       []jira.Board
@@ -145,7 +146,8 @@ func (s *stubClient) SprintIssuesPage(_ int, from, pageSize int) (*client.PageRe
 	}
 	issues := s.sprintIssues
 	if from >= len(issues) {
-		return &client.PageResult{Issues: nil, HasMore: false, From: from}, nil
+		total := s.sprintTotal // When set, simulates Agile API reporting more issues than it can return.
+		return &client.PageResult{Issues: nil, HasMore: false, From: from, Total: total}, nil
 	}
 	end := from + pageSize
 	if end > len(issues) {
@@ -158,20 +160,32 @@ func (s *stubClient) SprintIssuesPage(_ int, from, pageSize int) (*client.PageRe
 		From:    from,
 	}, nil
 }
-func (s *stubClient) SearchJQLPage(_ string, pageSize int, _ int, _ string) (*client.PageResult, error) {
+func (s *stubClient) SearchJQLPage(_ string, pageSize int, from int, _ string) (*client.PageResult, error) {
 	if s.searchErr != nil {
 		return nil, s.searchErr
 	}
-	// Stub returns all search issues as a single page.
 	issues := s.searchIssues
-	if len(issues) > pageSize {
-		issues = issues[:pageSize]
+	if from >= len(issues) {
+		return &client.PageResult{Issues: nil, HasMore: false, From: from}, nil
+	}
+	end := from + pageSize
+	if end > len(issues) {
+		end = len(issues)
+	}
+	page := issues[from:end]
+	hasMore := end < len(issues)
+	token := ""
+	if hasMore {
+		token = fmt.Sprintf("page-%d", end) // Simulate cursor token.
 	}
 	return &client.PageResult{
-		Issues:  issues,
-		HasMore: false,
+		Issues:    page,
+		HasMore:   hasMore,
+		From:      from,
+		NextToken: token,
 	}, nil
 }
+func (s *stubClient) BoardFilterJQL(_ int) (string, error) { return "", fmt.Errorf("no filter") }
 func (s *stubClient) BoardIssuesPage(_ int, from, pageSize int) (*client.PageResult, error) {
 	// Reuse searchIssues for board issues fallback tests.
 	issues := s.searchIssues
@@ -1510,7 +1524,8 @@ func TestApp_SearchJQL_Error(t *testing.T) {
 
 func TestApp_FetchSprintIssues_Success(t *testing.T) {
 	c := defaultStub()
-	c.sprintIssues = []jira.Issue{
+	// fetchSprintIssues now uses SearchJQLPage (v3 JQL) instead of SprintIssuesPage (Agile v1).
+	c.searchIssues = []jira.Issue{
 		{Key: "PROJ-1", Summary: "A", ParentKey: "PROJ-100"},
 	}
 	c.parentMap = map[string]client.ParentInfo{
@@ -1535,11 +1550,16 @@ func TestApp_FetchSprintIssues_Success(t *testing.T) {
 	if loaded.Issues[0].ParentSummary != "Epic" {
 		t.Errorf("expected ParentSummary 'Epic', got %q", loaded.Issues[0].ParentSummary)
 	}
+	// Verify JQL and NextToken are populated for cursor-based pagination.
+	if loaded.JQL == "" {
+		t.Error("expected JQL to be set for v3 search-based sprint loading")
+	}
 }
 
 func TestApp_FetchSprintIssues_Error(t *testing.T) {
 	c := defaultStub()
-	c.sprintIssErr = errors.New("sprint issues failed")
+	// fetchSprintIssues now uses SearchJQLPage (v3 JQL) instead of SprintIssuesPage (Agile v1).
+	c.searchErr = errors.New("sprint issues failed")
 	app := NewApp(c, "", nil, nil, "")
 
 	cmd := app.fetchSprintIssues(99, "Sprint 99")
@@ -1725,7 +1745,8 @@ func TestApp_SearchJQL_ReturnsSearchResultsMsg(t *testing.T) {
 
 func TestApp_FetchSprintIssues_Progressive(t *testing.T) {
 	c := defaultStub()
-	c.sprintIssues = []jira.Issue{{Key: "SP-1"}}
+	// fetchSprintIssues now uses SearchJQLPage (v3 JQL) instead of SprintIssuesPage.
+	c.searchIssues = []jira.Issue{{Key: "SP-1"}}
 	app := newTestApp(c, "")
 	app.client = c
 
@@ -1741,6 +1762,74 @@ func TestApp_FetchSprintIssues_Progressive(t *testing.T) {
 	}
 	if loaded.Title != "Sprint 1" {
 		t.Errorf("expected title 'Sprint 1', got %q", loaded.Title)
+	}
+}
+
+func TestApp_FetchMoreIssues_SprintUsesJQL(t *testing.T) {
+	c := defaultStub()
+	// Sprint loading now uses v3 JQL search (not Agile v1), so set up searchIssues.
+	c.searchIssues = []jira.Issue{
+		{Key: "A-1"}, {Key: "A-2"}, {Key: "A-3"}, {Key: "A-4"}, {Key: "A-5"},
+	}
+
+	app := newTestApp(c, "")
+	app.client = c
+
+	// Simulate: first page loaded 3 issues, now fetching more via JQL.
+	cmd := app.fetchMoreIssues(IssuesPageMsg{
+		Source:   "sprint",
+		From:     3,
+		SprintID: 1,
+		JQL:      "sprint = 1 ORDER BY updated DESC",
+		Seq:      app.paginationSeq,
+	})
+	msg := cmd()
+
+	page, ok := msg.(IssuesPageMsg)
+	if !ok {
+		t.Fatalf("expected IssuesPageMsg, got %T", msg)
+	}
+
+	// Source should remain "sprint" (routed through SearchJQLPage).
+	if page.Source != "sprint" {
+		t.Errorf("expected source 'sprint', got %q", page.Source)
+	}
+
+	// Should have fetched the remaining issues via JQL.
+	if len(page.Issues) == 0 {
+		t.Fatal("expected issues from JQL search, got none")
+	}
+
+	// JQL should be carried through for subsequent pages.
+	if page.JQL == "" {
+		t.Error("expected JQL to be set for pagination continuation")
+	}
+}
+
+func TestApp_SprintIssues_RouteToSprintView(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSprint
+	app.paginationSeq = 1
+	app.currentIssues = []jira.Issue{{Key: "A-1"}, {Key: "A-2"}, {Key: "A-3"}}
+
+	// Sprint JQL pages should go to currentIssues (sprint view), NOT the search overlay.
+	model, _ := app.Update(IssuesPageMsg{
+		Issues:  []jira.Issue{{Key: "A-2"}, {Key: "A-4"}, {Key: "A-5"}},
+		HasMore: false,
+		Source:  "sprint",
+		Seq:     1,
+	})
+	a := model.(App)
+
+	// A-2 should be deduped, A-4 and A-5 appended.
+	if len(a.currentIssues) != 5 {
+		t.Errorf("expected 5 issues in currentIssues (deduped), got %d", len(a.currentIssues))
+	}
+
+	// Verify the search overlay was not activated.
+	if a.search.Visible() {
+		t.Error("sprint issues should not activate the search overlay")
 	}
 }
 
@@ -2891,5 +2980,223 @@ func TestApp_TransitionView_FallsBackToNameWhenToStatusEmpty(t *testing.T) {
 	}
 	if transitioned.NewStatus != "Done" {
 		t.Errorf("NewStatus = %q, want %q (should fall back to Name)", transitioned.NewStatus, "Done")
+	}
+}
+
+// --- Search board view tests ---
+
+func TestApp_BoardToggle_FromSearchResults(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+
+	// Set up search results.
+	issues := []jira.Issue{
+		{Key: "PROJ-1", Summary: "Task", Status: "To Do"},
+	}
+	model, _ := app.Update(SearchResultsMsg{Issues: issues, Query: "status = Open"})
+	a := model.(App)
+
+	if a.active != viewSearch {
+		t.Fatalf("expected viewSearch, got %d", a.active)
+	}
+
+	// Press 'b' to switch to search board view.
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	a = model.(App)
+
+	if a.active != viewSearchBoard {
+		t.Errorf("expected viewSearchBoard, got %d", a.active)
+	}
+
+	// Press 'b' again to switch back to search results.
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	a = model.(App)
+
+	if a.active != viewSearch {
+		t.Errorf("expected viewSearch after toggle back, got %d", a.active)
+	}
+}
+
+func TestApp_BackKey_FromSearchBoard_GoesToSearch(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSearchBoard
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a := model.(App)
+
+	if a.active != viewSearch {
+		t.Errorf("expected viewSearch on esc from search board, got %d", a.active)
+	}
+}
+
+func TestApp_BackKey_FromIssue_ToSearchBoard(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+
+	app.active = viewIssue
+	app.previousView = viewSearchBoard
+	app.searchIssues = []jira.Issue{{Key: "PROJ-1", Summary: "Task", Status: "To Do"}}
+	app.searchBoardTitle = "status = Open"
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a := model.(App)
+
+	if a.active != viewSearchBoard {
+		t.Errorf("expected back to viewSearchBoard, got %d", a.active)
+	}
+}
+
+func TestApp_SearchResultsMsg_CachesIssues(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+
+	issues := []jira.Issue{
+		{Key: "PROJ-1", Summary: "One", Status: "To Do"},
+		{Key: "PROJ-2", Summary: "Two", Status: "Done"},
+	}
+	model, _ := app.Update(SearchResultsMsg{Issues: issues, Query: "project = PROJ"})
+	a := model.(App)
+
+	if len(a.searchIssues) != 2 {
+		t.Errorf("expected 2 cached search issues, got %d", len(a.searchIssues))
+	}
+	if a.searchBoardTitle != "project = PROJ" {
+		t.Errorf("expected searchBoardTitle %q, got %q", "project = PROJ", a.searchBoardTitle)
+	}
+}
+
+func TestApp_IssuesPageMsg_SearchSource_AppendsToSearchCache(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSearch
+	app.search.Show()
+	app.search.SetResults([]jira.Issue{{Key: "S-1"}}, "status = Open")
+	app.searchIssues = []jira.Issue{{Key: "S-1"}}
+
+	model, _ := app.Update(IssuesPageMsg{
+		Issues:  []jira.Issue{{Key: "S-2"}, {Key: "S-1"}}, // S-1 is a duplicate.
+		HasMore: false,
+		Source:  "search",
+		From:    2,
+		Seq:     app.paginationSeq,
+	})
+	a := model.(App)
+
+	if len(a.searchIssues) != 2 {
+		t.Errorf("expected 2 cached search issues (deduped), got %d", len(a.searchIssues))
+	}
+}
+
+func TestApp_TransitionKey_FromSearchBoard(t *testing.T) {
+	c := defaultStub()
+	c.transitions = []jira.Transition{{ID: "1", Name: "In Progress"}}
+	app := newTestApp(c, "")
+
+	// Set up search board with an issue.
+	app.searchIssues = []jira.Issue{{Key: "PROJ-1", Summary: "Task", Status: "To Do"}}
+	app.board.SetIssues(app.searchIssues, "status = Open")
+	app.active = viewSearchBoard
+
+	// Select the issue in the board for highlight.
+	model, cmd := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
+	a := model.(App)
+
+	if a.active != viewTransition {
+		t.Errorf("expected viewTransition, got %d", a.active)
+	}
+	if a.transitionOrigin != viewSearchBoard {
+		t.Errorf("expected transitionOrigin viewSearchBoard, got %d", a.transitionOrigin)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd for fetching transitions")
+	}
+}
+
+func TestApp_IssueTransitionedMsg_Success_FromSearchBoard(t *testing.T) {
+	c := defaultStub()
+	c.searchIssues = []jira.Issue{{Key: "PROJ-1"}}
+	app := newTestApp(c, "")
+	app.active = viewTransition
+	app.transitionOrigin = viewSearchBoard
+	app.searchIssues = []jira.Issue{{Key: "PROJ-1", Summary: "Task", Status: "To Do"}}
+	app.searchBoardTitle = "status = Open"
+
+	model, cmd := app.Update(IssueTransitionedMsg{Key: "PROJ-1", NewStatus: "Done"})
+	a := model.(App)
+
+	if a.active != viewSearchBoard {
+		t.Errorf("expected viewSearchBoard after transition, got %d", a.active)
+	}
+	if a.statusMsg != "Moved to Done" {
+		t.Errorf("expected 'Moved to Done', got %q", a.statusMsg)
+	}
+	// Search cache should be updated.
+	if a.searchIssues[0].Status != "Done" {
+		t.Errorf("expected search cache status 'Done', got %q", a.searchIssues[0].Status)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd (searchJQL refresh)")
+	}
+}
+
+func TestApp_RefreshKey_FromSearchBoard(t *testing.T) {
+	c := defaultStub()
+	c.searchIssues = []jira.Issue{{Key: "S-1"}}
+	app := newTestApp(c, "")
+	app.active = viewSearchBoard
+	app.searchBoardTitle = "status = Open"
+
+	model, cmd := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	a := model.(App)
+
+	if a.statusMsg != "Refreshing..." {
+		t.Errorf("expected 'Refreshing...', got %q", a.statusMsg)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd (searchJQL)")
+	}
+}
+
+func TestApp_View_SearchBoard(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSearchBoard
+
+	v := app.View()
+	if v == "" {
+		t.Error("expected non-empty search board view")
+	}
+}
+
+func TestFooterView_SearchBoard(t *testing.T) {
+	v := footerView(viewSearchBoard, 120, "", false)
+	if !strings.Contains(v, "list view") {
+		t.Error("expected 'list view' in search board footer")
+	}
+	if !strings.Contains(v, "move") {
+		t.Error("expected 'move' in search board footer")
+	}
+	if !strings.Contains(v, "columns") {
+		t.Error("expected 'columns' in search board footer")
+	}
+	if !strings.Contains(v, "filters") {
+		t.Error("expected 'filters' in search board footer")
+	}
+}
+
+func TestApp_FiltersKey_FromSearchBoard(t *testing.T) {
+	c := defaultStub()
+	app := newTestApp(c, "")
+	app.active = viewSearchBoard
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	a := model.(App)
+
+	if a.active != viewFilters {
+		t.Errorf("expected viewFilters, got %d", a.active)
+	}
+	if a.filterOrigin != viewSearchBoard {
+		t.Errorf("expected filterOrigin viewSearchBoard, got %d", a.filterOrigin)
 	}
 }

@@ -50,6 +50,7 @@ const (
 	viewSprint
 	viewIssue
 	viewSearch
+	viewSearchBoard // Board view for search/filter results.
 	viewBoard
 	viewBranch
 	viewCreate
@@ -102,6 +103,8 @@ type App struct {
 	needsSetup       bool
 	issueStack       []jira.Issue       // Stack of issues for parent/pick navigation.
 	currentIssues    []jira.Issue       // Cached for list↔board toggle.
+	searchIssues     []jira.Issue       // Cached search results for list↔board toggle.
+	searchBoardTitle string             // Title for the search board view.
 	boardTitle       string             // Dynamic title: sprint name, board name, project key, etc.
 	jqlMetaLoaded    bool               // Prevents redundant metadata fetches.
 	jqlMeta          *jira.JQLMetadata  // Cached metadata for edit view priorities etc.
@@ -256,6 +259,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, a.keys.Board) && a.active == viewBoard:
 			a.active = viewSprint
 			return a, nil
+		case key.Matches(msg, a.keys.Board) && a.active == viewSearch && a.search.ShowingResults():
+			a.board.SetIssues(a.searchIssues, a.searchBoardTitle)
+			a.active = viewSearchBoard
+			return a, nil
+		case key.Matches(msg, a.keys.Board) && a.active == viewSearchBoard:
+			a.search.Reshow()
+			a.active = viewSearch
+			return a, nil
 		case key.Matches(msg, a.keys.Branch) && a.active == viewIssue:
 			if iss := a.issue.CurrentIssue(); iss != nil {
 				repoPath := ""
@@ -278,14 +289,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.previousView = a.active
 			a.active = viewCreate
 			return a, a.create.Init()
-		case key.Matches(msg, a.keys.Transition) && (a.active == viewIssue || a.active == viewBoard):
+		case key.Matches(msg, a.keys.Transition) && (a.active == viewIssue || a.active == viewBoard || a.active == viewSearchBoard):
 			var issueKey string
 			switch a.active {
 			case viewIssue:
 				if iss := a.issue.CurrentIssue(); iss != nil {
 					issueKey = iss.Key
 				}
-			case viewBoard:
+			case viewBoard, viewSearchBoard:
 				if iss, ok := a.board.HighlightedIssue(); ok {
 					issueKey = iss.Key
 				}
@@ -354,7 +365,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 		case key.Matches(msg, a.keys.Filters) &&
-			(a.active == viewHome || a.active == viewSprint || a.active == viewBoard) &&
+			(a.active == viewHome || a.active == viewSprint || a.active == viewBoard || a.active == viewSearchBoard) &&
 			!a.search.Visible():
 			a.filter.Reset()
 			a.filter.SetFilters(a.savedFilters)
@@ -370,7 +381,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 			if len(profiles) == 0 {
-				// No profiles.yaml yet — show single "default" entry.
+				// No profiles.yml yet — show single "default" entry.
 				profiles = []string{"default"}
 			}
 			a.profile = profileview.New(profiles, a.profileName)
@@ -384,6 +395,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.statusMsg = "Refreshing..."
 			a.paginationSeq++
 			return a, tea.Batch(a.spinner.Tick, a.fetchActiveSprintForBoard(a.boardID))
+		case key.Matches(msg, a.keys.Refresh) && a.active == viewSearchBoard:
+			a.statusMsg = "Refreshing..."
+			a.paginationSeq++
+			return a, a.searchJQL(a.searchBoardTitle)
 		case key.Matches(msg, a.keys.Refresh) && a.active == viewHome:
 			a.statusMsg = "Refreshing..."
 			a.active = viewLoading
@@ -441,6 +456,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				JQL:        msg.JQL,
 				Project:    msg.Project,
 				Seq:        msg.Seq,
+				NextToken:  msg.NextToken,
 			})
 		}
 		// Single page — populate board immediately.
@@ -454,6 +470,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Source {
 		case "search":
 			a.search.AppendResults(msg.Issues)
+			// Keep search cache in sync for board toggle.
+			seen := make(map[string]bool, len(a.searchIssues))
+			for _, iss := range a.searchIssues {
+				seen[iss.Key] = true
+			}
+			for _, iss := range msg.Issues {
+				if !seen[iss.Key] {
+					a.searchIssues = append(a.searchIssues, iss)
+				}
+			}
 		default:
 			// Dedup — Jira's offset-based pagination can return overlapping results.
 			seen := make(map[string]bool, len(a.currentIssues))
@@ -531,6 +557,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.previousView = a.searchOrigin
 		}
 		a.search.SetResults(msg.Issues, msg.Query)
+		// Cache search results for board toggle.
+		a.searchIssues = msg.Issues
+		a.searchBoardTitle = msg.Query
 		a.active = viewSearch
 		a.statusMsg = ""
 		if msg.HasMore {
@@ -594,6 +623,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				a.search.UpdateIssueStatus(msg.Key, msg.NewStatus)
 				a.sprint = a.sprint.UpdateIssueStatus(msg.Key, msg.NewStatus)
+				// Update search issue cache.
+				for i, iss := range a.searchIssues {
+					if iss.Key == msg.Key {
+						a.searchIssues[i].Status = msg.NewStatus
+					}
+				}
 				var cmds []tea.Cmd
 				if a.transitionOrigin == viewIssue {
 					// Re-fetch issue details to reflect the new status.
@@ -602,6 +637,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if a.transitionOrigin == viewBoard || a.transitionOrigin == viewSprint {
 					// Refresh the board/sprint to reflect the status change.
 					cmds = append(cmds, a.refreshCurrentView())
+				}
+				if a.transitionOrigin == viewSearchBoard {
+					// Re-run search to refresh the board.
+					a.paginationSeq++
+					cmds = append(cmds, a.searchJQL(a.searchBoardTitle))
 				}
 				if len(cmds) > 0 {
 					return a, tea.Batch(cmds...)
@@ -669,6 +709,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch a.previousView {
 				case viewBoard:
 					a.active = viewBoard
+				case viewSearchBoard:
+					a.board.SetIssues(a.searchIssues, a.searchBoardTitle)
+					a.active = viewSearchBoard
 				default:
 					a.active = viewSprint
 				}
@@ -836,11 +879,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Fetch full details and children in background.
 			return a, tea.Batch(cmd, a.fetchIssueBundle(iss.Key))
 		}
-	case viewBoard:
+	case viewBoard, viewSearchBoard:
 		a.board, cmd = a.board.Update(msg)
 		if iss, ok := a.board.SelectedIssue(); ok {
 			a.active = viewIssue
-			a.previousView = viewBoard
+			a.previousView = a.active // Preserves viewBoard or viewSearchBoard.
 			a.issue = a.issue.SetIssue(iss)
 			a.issue.SetIssueURL(a.client.IssueURL(iss.Key))
 			return a, tea.Batch(cmd, a.fetchIssueBundle(iss.Key))
@@ -1127,7 +1170,7 @@ func (a App) View() string {
 		content = a.search.View()
 	case viewCreate:
 		content = a.create.View()
-	case viewBoard:
+	case viewBoard, viewSearchBoard:
 		content = a.board.View()
 	case viewBranch:
 		content = a.branch.View()
@@ -1172,6 +1215,7 @@ func (a App) View() string {
 				extra = append(extra, footerBinding{"s", "save filter"})
 			}
 			extra = append(extra,
+				footerBinding{"b", "board view"},
 				footerBinding{"r", "refresh"},
 				footerBinding{"/", "filter"},
 				footerBinding{"esc", "back"},
@@ -1342,6 +1386,9 @@ func (a App) navigateBack() (tea.Model, tea.Cmd) {
 			a.search.Reshow()
 			a.active = viewSearch
 			a.previousView = a.searchOrigin
+		case viewSearchBoard:
+			a.board.SetIssues(a.searchIssues, a.searchBoardTitle)
+			a.active = viewSearchBoard
 		case viewBoard:
 			a.active = viewBoard
 		default:
@@ -1350,6 +1397,10 @@ func (a App) navigateBack() (tea.Model, tea.Cmd) {
 		return a, nil
 	case viewBoard:
 		a.active = viewSprint
+		return a, nil
+	case viewSearchBoard:
+		a.search.Reshow()
+		a.active = viewSearch
 		return a, nil
 	case viewSprint:
 		if a.sprint.Filtered() {
@@ -1413,7 +1464,13 @@ func (a App) verifyAuth() tea.Cmd {
 func (a App) fetchSprintIssues(sprintID int, sprintName string) tea.Cmd {
 	seq := a.paginationSeq
 	return func() tea.Msg {
-		page, err := a.client.SprintIssuesPage(sprintID, 0, client.DefaultPageSize)
+		// Use v3 JQL search instead of the Agile v1 sprint endpoint.
+		// The Agile v1 API has an undocumented truncation limit on Jira Cloud
+		// (~1000 issues) where it returns empty pages despite reporting more.
+		// The v3 /search/jql endpoint uses cursor-based pagination and does
+		// not suffer from this limitation.
+		jql := fmt.Sprintf("sprint = %d ORDER BY updated DESC", sprintID)
+		page, err := a.client.SearchJQLPage(jql, client.DefaultPageSize, 0, "")
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
@@ -1430,6 +1487,8 @@ func (a App) fetchSprintIssues(sprintID int, sprintName string) tea.Cmd {
 			From:       len(page.Issues),
 			SprintID:   sprintID,
 			SprintName: sprintName,
+			JQL:        jql,
+			NextToken:  page.NextToken,
 			Seq:        seq,
 		}
 	}
@@ -1445,20 +1504,22 @@ func (a App) fetchMoreIssues(msg IssuesPageMsg) tea.Cmd {
 		from := msg.From
 		nextToken := msg.NextToken
 		hasMore := true
+		source := msg.Source
+		jql := msg.JQL
 
 		for range pagesPerBatch {
 			var page *client.PageResult
 			var err error
 
-			switch msg.Source {
-			case "sprint":
-				page, err = a.client.SprintIssuesPage(msg.SprintID, from, client.DefaultPageSize)
+			switch source {
+			case "sprint", "epic", "board", "search":
+				// All issue loading uses v3 JQL cursor-based search.
+				// Sprint and epic previously used Agile v1 endpoints, but
+				// those have an undocumented truncation limit on Jira Cloud
+				// (~1000 issues). The v3 /search/jql endpoint does not.
+				page, err = a.client.SearchJQLPage(jql, client.DefaultPageSize, from, nextToken)
 			case "boardapi":
 				page, err = a.client.BoardIssuesPage(msg.SprintID, from, client.DefaultPageSize)
-			case "board", "search":
-				page, err = a.client.SearchJQLPage(msg.JQL, client.DefaultPageSize, from, nextToken)
-			case "epic":
-				page, err = a.client.EpicIssuesPage(msg.EpicKey, from, client.DefaultPageSize)
 			}
 
 			if err != nil {
@@ -1467,6 +1528,13 @@ func (a App) fetchMoreIssues(msg IssuesPageMsg) tea.Cmd {
 
 			allIssues = append(allIssues, page.Issues...)
 			from += len(page.Issues)
+
+			// Detect cursor loop — Jira Cloud has a known bug where
+			// nextPageToken can repeat, returning the same page forever.
+			if page.NextToken == nextToken && nextToken != "" {
+				hasMore = false
+				break
+			}
 			nextToken = page.NextToken
 			hasMore = page.HasMore && from < client.MaxTotalIssues
 
@@ -1482,12 +1550,12 @@ func (a App) fetchMoreIssues(msg IssuesPageMsg) tea.Cmd {
 		return IssuesPageMsg{
 			Issues:     enriched,
 			HasMore:    hasMore,
-			Source:     msg.Source,
+			Source:     source,
 			From:       from,
 			SprintID:   msg.SprintID,
 			SprintName: msg.SprintName,
 			EpicKey:    msg.EpicKey,
-			JQL:        msg.JQL,
+			JQL:        jql,
 			Project:    msg.Project,
 			Seq:        msg.Seq,
 			NextToken:  nextToken,
@@ -1850,9 +1918,41 @@ func (a App) fetchActiveSprintForBoard(boardID int) tea.Cmd {
 			return SprintLoadedMsg{Sprint: &sprints[0]}
 		}
 
-		// No active sprint — fetch board issues via the Agile API directly.
-		// This uses /board/{id}/issue with reliable offset-based pagination,
-		// avoiding the broken /search/jql token pagination and deprecated /search.
+		// No active sprint — fetch board issues via v3 JQL search using
+		// the board's filter. The Agile v1 /board/{id}/issue endpoint has
+		// an undocumented truncation limit on Jira Cloud (~1000 issues)
+		// where it returns empty pages despite reporting more results.
+		jql, filterErr := a.client.BoardFilterJQL(boardID)
+		if filterErr == nil && jql != "" {
+			// Replace any existing ORDER BY with updated DESC so the most
+			// recently edited issues load first during progressive pagination.
+			if idx := strings.Index(strings.ToUpper(jql), "ORDER BY"); idx >= 0 {
+				jql = strings.TrimSpace(jql[:idx])
+			}
+			jql += " ORDER BY updated DESC"
+
+			page, searchErr := a.client.SearchJQLPage(jql, client.DefaultPageSize, 0, "")
+			if searchErr != nil {
+				return ErrMsg{Err: searchErr}
+			}
+
+			parents := a.client.ResolveParents(page.Issues)
+			enriched := client.EnrichWithParents(page.Issues, parents)
+
+			return IssuesLoadedMsg{
+				Issues:    enriched,
+				Title:     "Board",
+				HasMore:   page.HasMore,
+				Source:    "board",
+				From:      len(page.Issues),
+				SprintID:  boardID,
+				JQL:       jql,
+				NextToken: page.NextToken,
+				Seq:       seq,
+			}
+		}
+
+		// Fallback: board filter unavailable — use Agile v1 directly.
 		page, fetchErr := a.client.BoardIssuesPage(boardID, 0, client.DefaultPageSize)
 		if fetchErr != nil {
 			return ErrMsg{Err: fmt.Errorf("no active iteration and board issue fetch failed: %w", fetchErr)}
@@ -1867,7 +1967,7 @@ func (a App) fetchActiveSprintForBoard(boardID int) tea.Cmd {
 			HasMore:  page.HasMore,
 			Source:   "boardapi",
 			From:     len(page.Issues),
-			SprintID: boardID, // Carries board ID for pagination.
+			SprintID: boardID,
 			Seq:      seq,
 		}
 	}

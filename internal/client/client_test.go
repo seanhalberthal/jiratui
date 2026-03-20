@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	jiracli "github.com/ankitpokhrel/jira-cli/pkg/jira"
+	"github.com/seanhalberthal/jiru/internal/api"
 	"github.com/seanhalberthal/jiru/internal/jira"
 )
 
@@ -64,10 +64,10 @@ func TestEnrichWithParents_EmptySlice(t *testing.T) {
 
 // --- convertIssue tests ---
 
-// issueFromJSON is a test helper that creates a jiracli.Issue from JSON.
-func issueFromJSON(t *testing.T, raw string) *jiracli.Issue {
+// issueFromJSON is a test helper that creates an api.Issue from JSON.
+func issueFromJSON(t *testing.T, raw string) *api.Issue {
 	t.Helper()
-	var iss jiracli.Issue
+	var iss api.Issue
 	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
 		t.Fatalf("failed to unmarshal test issue: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestConvertIssue_BasicFields(t *testing.T) {
 			"priority": {"name": "High"},
 			"assignee": {"displayName": "alice"},
 			"reporter": {"displayName": "bob"},
-			"issueType": {"name": "Story"},
+			"issuetype": {"name": "Story"},
 			"labels": ["backend", "urgent"]
 		}
 	}`)
@@ -319,64 +319,4 @@ func TestJqlEscape(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestTransitionsResponse_JSON(t *testing.T) {
-	t.Run("normal response with multiple transitions", func(t *testing.T) {
-		raw := `{"transitions":[
-			{"id":11,"name":"Start Progress","to":{"name":"In Progress"}},
-			{"id":21,"name":"Close Issue","to":{"name":"Done"}}
-		]}`
-
-		var out transitionsResponse
-		if err := json.Unmarshal([]byte(raw), &out); err != nil {
-			t.Fatalf("Unmarshal error: %v", err)
-		}
-		if len(out.Transitions) != 2 {
-			t.Fatalf("expected 2 transitions, got %d", len(out.Transitions))
-		}
-
-		// Verify to.name mapping.
-		if out.Transitions[0].To.Name != "In Progress" {
-			t.Errorf("Transitions[0].To.Name = %q, want %q", out.Transitions[0].To.Name, "In Progress")
-		}
-		if out.Transitions[1].To.Name != "Done" {
-			t.Errorf("Transitions[1].To.Name = %q, want %q", out.Transitions[1].To.Name, "Done")
-		}
-
-		// Verify json.Number ID handling.
-		if out.Transitions[0].ID.String() != "11" {
-			t.Errorf("Transitions[0].ID = %q, want %q", out.Transitions[0].ID.String(), "11")
-		}
-
-		// Verify transition action name.
-		if out.Transitions[0].Name != "Start Progress" {
-			t.Errorf("Transitions[0].Name = %q, want %q", out.Transitions[0].Name, "Start Progress")
-		}
-	})
-
-	t.Run("empty transitions array", func(t *testing.T) {
-		raw := `{"transitions":[]}`
-		var out transitionsResponse
-		if err := json.Unmarshal([]byte(raw), &out); err != nil {
-			t.Fatalf("Unmarshal error: %v", err)
-		}
-		if len(out.Transitions) != 0 {
-			t.Errorf("expected 0 transitions, got %d", len(out.Transitions))
-		}
-	})
-
-	t.Run("missing to object", func(t *testing.T) {
-		raw := `{"transitions":[{"id":11,"name":"Reopen"}]}`
-		var out transitionsResponse
-		if err := json.Unmarshal([]byte(raw), &out); err != nil {
-			t.Fatalf("Unmarshal error: %v", err)
-		}
-		if len(out.Transitions) != 1 {
-			t.Fatalf("expected 1 transition, got %d", len(out.Transitions))
-		}
-		if out.Transitions[0].To.Name != "" {
-			t.Errorf("To.Name should be empty when to object is missing, got %q", out.Transitions[0].To.Name)
-		}
-	})
 }

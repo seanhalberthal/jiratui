@@ -97,9 +97,6 @@ func runReset() error {
 }
 
 func runTUI(directIssue string) error {
-	// Auto-migrate existing config.env to profiles.yaml on first run.
-	_ = config.MigrateToProfiles()
-
 	// Set the filter profile if specified.
 	if profileFlag != "" {
 		filters.SetProfile(profileFlag)

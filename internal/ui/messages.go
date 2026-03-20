@@ -30,7 +30,8 @@ type IssuesLoadedMsg struct {
 	EpicKey    string
 	JQL        string
 	Project    string
-	Seq        int // Pagination sequence — stale pages are discarded.
+	Seq        int    // Pagination sequence — stale pages are discarded.
+	NextToken  string // Cursor for v3 /search/jql pagination.
 }
 
 // IssuesPageMsg carries a subsequent page of issues during progressive loading.

@@ -100,6 +100,7 @@ func TestLoad_MissingDomain(t *testing.T) {
 	t.Setenv("JIRA_URL", "")
 	t.Setenv("JIRA_USER", "user@test.com")
 	t.Setenv("JIRA_API_TOKEN", "token")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	_, err := Load()
@@ -113,6 +114,7 @@ func TestLoad_MissingUser(t *testing.T) {
 	t.Setenv("JIRA_USER", "")
 	t.Setenv("JIRA_USERNAME", "")
 	t.Setenv("JIRA_API_TOKEN", "token")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	_, err := Load()
@@ -125,6 +127,7 @@ func TestLoad_MissingToken(t *testing.T) {
 	t.Setenv("JIRA_DOMAIN", "test.atlassian.net")
 	t.Setenv("JIRA_USER", "user@test.com")
 	t.Setenv("JIRA_API_TOKEN", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	_, err := Load()
@@ -167,6 +170,7 @@ func TestLoad_RepoPathEmpty(t *testing.T) {
 	t.Setenv("JIRA_USER", "user@test.com")
 	t.Setenv("JIRA_API_TOKEN", "token")
 	t.Setenv("JIRA_REPO_PATH", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	cfg, err := Load()
@@ -183,6 +187,7 @@ func TestPartialLoad_RepoPath(t *testing.T) {
 	t.Setenv("JIRA_USER", "user@test.com")
 	t.Setenv("JIRA_API_TOKEN", "token")
 	t.Setenv("JIRA_REPO_PATH", "/repos/project")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	cfg, missing := PartialLoad()
@@ -196,9 +201,9 @@ func TestPartialLoad_RepoPath(t *testing.T) {
 
 func TestResetConfig_ClearsEnvVars(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 
-	// Set all env vars that ResetConfig should clear.
 	for _, k := range []string{
 		"JIRA_DOMAIN", "JIRA_URL", "JIRA_USER", "JIRA_USERNAME",
 		"JIRA_API_TOKEN", "JIRA_AUTH_TYPE", "JIRA_BOARD_ID",
@@ -225,13 +230,13 @@ func TestResetConfig_ClearsEnvVars(t *testing.T) {
 func TestResetConfig_RemovesProfilesAndLegacyConfig(t *testing.T) {
 	keyring.MockInit()
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 	cfgDir := filepath.Join(dir, ".config", "jiru")
 	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create profiles.yaml.
 	store := &ProfileStore{
 		Active: "default",
 		Profiles: map[string]Config{
@@ -241,12 +246,11 @@ func TestResetConfig_RemovesProfilesAndLegacyConfig(t *testing.T) {
 	}
 	writeTestProfiles(t, dir, store)
 
-	// Set keyring tokens for both profiles.
 	_ = keyring.Set(keyringService, keyringUserForProfile("default"), "default-token")
 	_ = keyring.Set(keyringService, keyringUserForProfile("staging"), "staging-token")
 
 	// Also create a legacy config.env.
-	if err := os.WriteFile(filepath.Join(cfgDir, "config.env"), []byte("export JIRA_DOMAIN=\"test\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.env"), []byte("legacy\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -254,15 +258,12 @@ func TestResetConfig_RemovesProfilesAndLegacyConfig(t *testing.T) {
 		t.Fatalf("ResetConfig failed: %v", err)
 	}
 
-	// profiles.yaml should be removed.
-	if _, err := os.Stat(filepath.Join(cfgDir, "profiles.yaml")); !os.IsNotExist(err) {
-		t.Error("profiles.yaml should be removed after reset")
+	if _, err := os.Stat(filepath.Join(cfgDir, "profiles.yml")); !os.IsNotExist(err) {
+		t.Error("profiles.yml should be removed after reset")
 	}
-	// Legacy config.env should also be removed.
 	if _, err := os.Stat(filepath.Join(cfgDir, "config.env")); !os.IsNotExist(err) {
 		t.Error("config.env should be removed after reset")
 	}
-	// Keyring entries should be gone.
 	if _, err := keyring.Get(keyringService, keyringUserForProfile("default")); err == nil {
 		t.Error("expected default profile keyring entry to be deleted")
 	}
@@ -316,6 +317,7 @@ func TestExpandTilde(t *testing.T) {
 func TestWriteConfigProfile_CreatesProfile(t *testing.T) {
 	keyring.MockInit()
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 
 	cfg := &Config{
@@ -331,7 +333,6 @@ func TestWriteConfigProfile_CreatesProfile(t *testing.T) {
 		t.Fatalf("WriteConfigProfile failed: %v", err)
 	}
 
-	// Verify profile was created in profiles.yaml.
 	store, err := LoadProfiles()
 	if err != nil {
 		t.Fatalf("LoadProfiles failed: %v", err)
@@ -359,7 +360,6 @@ func TestWriteConfigProfile_CreatesProfile(t *testing.T) {
 		t.Error("profile should not contain API token (should be in keyring only)")
 	}
 
-	// Token should be in keyring.
 	token, err := keyring.Get(keyringService, keyringUser)
 	if err != nil {
 		t.Fatalf("keyring.Get failed: %v", err)
@@ -367,17 +367,12 @@ func TestWriteConfigProfile_CreatesProfile(t *testing.T) {
 	if token != "secret-token" {
 		t.Errorf("keyring token = %q, want %q", token, "secret-token")
 	}
-
-	// config.env should NOT be created.
-	configEnvPath := filepath.Join(dir, ".config", "jiru", "config.env")
-	if _, err := os.Stat(configEnvPath); !os.IsNotExist(err) {
-		t.Error("config.env should not be created")
-	}
 }
 
 func TestWriteConfigProfile_FilePermissions(t *testing.T) {
 	keyring.MockInit()
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 
 	cfg := &Config{
@@ -389,22 +384,22 @@ func TestWriteConfigProfile_FilePermissions(t *testing.T) {
 
 	_ = WriteConfigProfile("default", cfg)
 
-	path := filepath.Join(dir, ".config", "jiru", "profiles.yaml")
+	path := filepath.Join(dir, ".config", "jiru", "profiles.yml")
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat failed: %v", err)
 	}
 	perm := info.Mode().Perm()
 	if perm != 0o600 {
-		t.Errorf("profiles.yaml permissions = %o, want 0600", perm)
+		t.Errorf("profiles.yml permissions = %o, want 0600", perm)
 	}
 }
 
 func TestWriteConfigProfile_DoesNotSetTokenInEnv(t *testing.T) {
 	keyring.MockInit()
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
-	// Clear any existing token env var.
 	t.Setenv("JIRA_API_TOKEN", "")
 
 	cfg := &Config{
@@ -416,7 +411,6 @@ func TestWriteConfigProfile_DoesNotSetTokenInEnv(t *testing.T) {
 
 	_ = WriteConfigProfile("default", cfg)
 
-	// The token should NOT be in the environment.
 	if os.Getenv("JIRA_API_TOKEN") == "secret-token" {
 		t.Error("WriteConfigProfile should not set JIRA_API_TOKEN in the process environment")
 	}
@@ -425,6 +419,7 @@ func TestWriteConfigProfile_DoesNotSetTokenInEnv(t *testing.T) {
 func TestWriteConfigProfile_SetsNonSecretEnvVars(t *testing.T) {
 	keyring.MockInit()
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 
 	cfg := &Config{
@@ -446,8 +441,8 @@ func TestWriteConfigProfile_SetsNonSecretEnvVars(t *testing.T) {
 
 func TestResetConfig_NoConfigFile(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
-	// No config file exists — should not error.
 	if err := ResetConfig(); err != nil {
 		t.Fatalf("ResetConfig should not error when config file doesn't exist: %v", err)
 	}
@@ -473,6 +468,7 @@ func TestLoad_DefaultBranchMode(t *testing.T) {
 	t.Setenv("JIRA_USER", "user@test.com")
 	t.Setenv("JIRA_API_TOKEN", "token")
 	t.Setenv("JIRA_BRANCH_MODE", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	cfg, err := Load()
@@ -516,6 +512,7 @@ func TestLoad_BranchUppercase(t *testing.T) {
 
 func TestPartialLoad_MissingFields(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 	t.Setenv("JIRA_DOMAIN", "test.atlassian.net")
 	t.Setenv("JIRA_USER", "")
@@ -548,6 +545,7 @@ func TestPartialLoad_MissingFields(t *testing.T) {
 
 func TestPartialLoad_InvalidAuthTypeFallsBack(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 	t.Setenv("JIRA_DOMAIN", "test.atlassian.net")
 	t.Setenv("JIRA_USER", "user@test.com")
@@ -562,6 +560,7 @@ func TestPartialLoad_InvalidAuthTypeFallsBack(t *testing.T) {
 
 func TestPartialLoad_InvalidBranchModeFallsBack(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 	t.Setenv("JIRA_DOMAIN", "test.atlassian.net")
 	t.Setenv("JIRA_USER", "user@test.com")
@@ -583,9 +582,9 @@ func TestStripProtocol_EdgeCases(t *testing.T) {
 		{"http://bar.com", "bar.com"},
 		{"foo.com", "foo.com"},
 		{"", ""},
-		{"https://", "https://"},                   // Prefix-only, nothing after it.
-		{"http://", "http://"},                     // Prefix-only, nothing after it.
-		{"ftp://example.com", "ftp://example.com"}, // Unsupported protocol.
+		{"https://", "https://"},
+		{"http://", "http://"},
+		{"ftp://example.com", "ftp://example.com"},
 	}
 	for _, tt := range tests {
 		got := stripProtocol(tt.input)
@@ -598,6 +597,7 @@ func TestStripProtocol_EdgeCases(t *testing.T) {
 func TestWriteConfigProfile_StoresBranchMode(t *testing.T) {
 	keyring.MockInit()
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 
 	cfg := &Config{
@@ -625,6 +625,7 @@ func TestWriteConfigProfile_StoresBranchMode(t *testing.T) {
 func TestWriteConfigProfile_StoresBranchUppercase(t *testing.T) {
 	keyring.MockInit()
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 
 	cfg := &Config{
@@ -652,6 +653,7 @@ func TestWriteConfigProfile_StoresBranchUppercase(t *testing.T) {
 func TestWriteConfigProfile_NamedProfile(t *testing.T) {
 	keyring.MockInit()
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 
 	cfg := &Config{
@@ -681,7 +683,6 @@ func TestWriteConfigProfile_NamedProfile(t *testing.T) {
 		t.Errorf("AuthType = %q, want %q", p.AuthType, "bearer")
 	}
 
-	// Token should be in profile-specific keyring key.
 	token, err := keyring.Get(keyringService, keyringUserForProfile("staging"))
 	if err != nil {
 		t.Fatalf("keyring.Get failed: %v", err)
@@ -694,6 +695,7 @@ func TestWriteConfigProfile_NamedProfile(t *testing.T) {
 func TestWriteConfigProfile_EmptyNameDefaultsToDefault(t *testing.T) {
 	keyring.MockInit()
 	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", dir)
 
 	cfg := &Config{
@@ -713,117 +715,5 @@ func TestWriteConfigProfile_EmptyNameDefaultsToDefault(t *testing.T) {
 	}
 	if _, ok := store.Profiles["default"]; !ok {
 		t.Error("empty profile name should save as 'default'")
-	}
-}
-
-func TestLoadJiraCliConfig(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	// Create the jira-cli config directory and file.
-	jiraDir := filepath.Join(dir, ".config", ".jira")
-	if err := os.MkdirAll(jiraDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	configContent := `server: https://jira-cli.atlassian.net
-login: jira-user@example.com
-board:
-  id: 99
-`
-	if err := os.WriteFile(filepath.Join(jiraDir, ".config.yml"), []byte(configContent), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := &Config{}
-	if err := cfg.loadJiraCliConfig(); err != nil {
-		t.Fatalf("loadJiraCliConfig failed: %v", err)
-	}
-
-	if cfg.Domain != "jira-cli.atlassian.net" {
-		t.Errorf("Domain = %q, want %q", cfg.Domain, "jira-cli.atlassian.net")
-	}
-	if cfg.User != "jira-user@example.com" {
-		t.Errorf("User = %q, want %q", cfg.User, "jira-user@example.com")
-	}
-	if cfg.BoardID != 99 {
-		t.Errorf("BoardID = %d, want 99", cfg.BoardID)
-	}
-}
-
-func TestLoadJiraCliConfig_DoesNotOverrideExisting(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	// Create the jira-cli config directory and file.
-	jiraDir := filepath.Join(dir, ".config", ".jira")
-	if err := os.MkdirAll(jiraDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	configContent := `server: https://override.atlassian.net
-login: override@example.com
-board:
-  id: 77
-`
-	if err := os.WriteFile(filepath.Join(jiraDir, ".config.yml"), []byte(configContent), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := &Config{
-		Domain:  "existing.atlassian.net",
-		User:    "existing@test.com",
-		BoardID: 42,
-	}
-	if err := cfg.loadJiraCliConfig(); err != nil {
-		t.Fatalf("loadJiraCliConfig failed: %v", err)
-	}
-
-	// Existing values should not be overridden.
-	if cfg.Domain != "existing.atlassian.net" {
-		t.Errorf("Domain = %q, want %q (should not be overridden)", cfg.Domain, "existing.atlassian.net")
-	}
-	if cfg.User != "existing@test.com" {
-		t.Errorf("User = %q, want %q (should not be overridden)", cfg.User, "existing@test.com")
-	}
-	if cfg.BoardID != 42 {
-		t.Errorf("BoardID = %d, want 42 (should not be overridden)", cfg.BoardID)
-	}
-}
-
-func TestLoadJiraCliConfig_MissingFile(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	cfg := &Config{}
-	err := cfg.loadJiraCliConfig()
-	if err == nil {
-		t.Error("expected error when jira-cli config file does not exist")
-	}
-}
-
-func TestLoadJiraCliConfig_NoBoardField(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	jiraDir := filepath.Join(dir, ".config", ".jira")
-	if err := os.MkdirAll(jiraDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	configContent := `server: https://nobboard.atlassian.net
-login: user@example.com
-`
-	if err := os.WriteFile(filepath.Join(jiraDir, ".config.yml"), []byte(configContent), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := &Config{}
-	if err := cfg.loadJiraCliConfig(); err != nil {
-		t.Fatalf("loadJiraCliConfig failed: %v", err)
-	}
-
-	if cfg.Domain != "nobboard.atlassian.net" {
-		t.Errorf("Domain = %q, want %q", cfg.Domain, "nobboard.atlassian.net")
-	}
-	if cfg.BoardID != 0 {
-		t.Errorf("BoardID = %d, want 0 when board field missing", cfg.BoardID)
 	}
 }

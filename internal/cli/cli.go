@@ -21,9 +21,7 @@ func InitClient() error {
 }
 
 // InitClientWithProfile loads config for a specific profile and creates a client.
-// Automatically migrates legacy config.env to profiles.yaml if needed.
 func InitClientWithProfile(profile string) error {
-	_ = config.MigrateToProfiles()
 	cfg, err := config.LoadProfile(profile)
 	if err != nil {
 		return fmt.Errorf("configuration error: %w\nRun 'jiru' or 'jiru --reset' to configure", err)
