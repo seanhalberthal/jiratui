@@ -248,10 +248,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.previousView = a.active
 			a.active = viewSetup
 			return a, a.setup.Init()
-		case key.Matches(msg, a.keys.Home) && a.active != viewHome && a.active != viewLoading:
-			a.issueStack = nil
-			a.active = viewHome
-			return a, nil
 		case key.Matches(msg, a.keys.Board) && a.active == viewSprint:
 			a.board.SetIssues(a.currentIssues, a.boardTitle)
 			a.active = viewBoard

@@ -725,23 +725,6 @@ func TestApp_SearchKey_IgnoredDuringLoading(t *testing.T) {
 	}
 }
 
-func TestApp_HomeKey_FromSprint(t *testing.T) {
-	c := defaultStub()
-	app := newTestApp(c, "")
-
-	// Move to sprint view.
-	model, _ := app.Update(IssuesLoadedMsg{Issues: nil, Title: "Sprint"})
-	a := model.(App)
-
-	// Press 'H' for home.
-	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("H")})
-	a = model.(App)
-
-	if a.active != viewHome {
-		t.Errorf("expected viewHome, got %d", a.active)
-	}
-}
-
 func TestApp_BoardToggle_FromSprint(t *testing.T) {
 	c := defaultStub()
 	app := newTestApp(c, "")
@@ -1079,26 +1062,6 @@ func TestApp_IssueStack_ClearedOnNewIssueFromList(t *testing.T) {
 
 	if len(a.issueStack) != 0 {
 		t.Errorf("expected stack cleared on IssueSelectedMsg, got %d", len(a.issueStack))
-	}
-}
-
-func TestApp_IssueStack_ClearedOnHome(t *testing.T) {
-	c := defaultStub()
-	app := newTestApp(c, "")
-	app.active = viewIssue
-	app.previousView = viewSprint
-	app.issueStack = []jira.Issue{
-		{Key: "PROJ-1", Summary: "Old", Status: "To Do"},
-	}
-
-	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("H")})
-	a := model.(App)
-
-	if len(a.issueStack) != 0 {
-		t.Errorf("expected stack cleared on Home, got %d", len(a.issueStack))
-	}
-	if a.active != viewHome {
-		t.Errorf("expected viewHome, got %d", a.active)
 	}
 }
 
