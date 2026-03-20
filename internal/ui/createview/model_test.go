@@ -71,6 +71,7 @@ func (s *stubClient) SearchJQLPage(_ string, _ int, _ int, _ string) (*client.Pa
 	return nil, nil
 }
 func (s *stubClient) BoardIssuesPage(_, _, _ int) (*client.PageResult, error)       { return nil, nil }
+func (s *stubClient) BoardFilterJQL(_ int) (string, error)                          { return "", nil }
 func (s *stubClient) EpicIssuesPage(_ string, _, _ int) (*client.PageResult, error) { return nil, nil }
 func (s *stubClient) AssignIssue(_, _ string) error                                 { return nil }
 func (s *stubClient) EditIssue(_ string, _ *client.EditIssueRequest) error          { return nil }

@@ -15,19 +15,9 @@ func keyringUserForProfile(profile string) string {
 	return keyringUser + "-" + profile
 }
 
-// setKeyringToken stores the API token in the OS keychain (default profile).
-func setKeyringToken(token string) error {
-	return keyring.Set(keyringService, keyringUser, token)
-}
-
-// deleteKeyringToken removes the API token from the OS keychain (default profile).
+// deleteKeyringToken removes the API token from the OS keychain (legacy default key).
 func deleteKeyringToken() {
 	_ = keyring.Delete(keyringService, keyringUser)
-}
-
-// getKeyringToken retrieves the API token from the OS keychain (default profile).
-func getKeyringToken() (string, error) {
-	return keyring.Get(keyringService, keyringUser)
 }
 
 // setKeyringTokenForProfile stores a token for a named profile.

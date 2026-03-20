@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Config holds the application configuration.
@@ -23,23 +21,14 @@ type Config struct {
 	BranchMode      string // "local", "remote", or "both" (default: "local")
 }
 
-// jiraCliConfig mirrors the relevant fields from jira-cli's config.yml.
-type jiraCliConfig struct {
-	Server string `yaml:"server"`
-	Login  string `yaml:"login"`
-	Board  *struct {
-		ID int `yaml:"id"`
-	} `yaml:"board"`
-}
-
 // Load reads configuration from environment variables, falling back to
-// zsh config files and then jira-cli's config file at ~/.config/.jira/.config.yml.
+// profiles.yml written by the setup wizard.
 func Load() (*Config, error) {
 	return LoadProfile("")
 }
 
 // LoadProfile loads configuration for a specific profile.
-// If name is empty, uses the active profile (or falls back to config.env).
+// If name is empty, uses the active profile.
 func LoadProfile(name string) (*Config, error) {
 	cfg := &Config{
 		AuthType: "basic",
@@ -50,18 +39,8 @@ func LoadProfile(name string) (*Config, error) {
 		return nil, err
 	}
 
-	// 1.5. Load from profile.
+	// 2. Load from profile.
 	cfg.applyProfile(name)
-
-	// 2. Fill gaps from zsh config files (e.g. ~/.zshrc, ~/.secrets.zsh).
-	if cfg.Domain == "" || cfg.User == "" || cfg.APIToken == "" {
-		cfg.applyZshCredentials()
-	}
-
-	// 3. Fall back to jira-cli config for missing values.
-	if cfg.Domain == "" || cfg.User == "" {
-		_ = cfg.loadJiraCliConfig()
-	}
 
 	// Default branch mode.
 	if cfg.BranchMode == "" {
@@ -86,13 +65,13 @@ func LoadProfile(name string) (*Config, error) {
 
 	// Validate required fields.
 	if cfg.Domain == "" {
-		return nil, fmt.Errorf("JIRA_DOMAIN or JIRA_URL is required (set env var, add to ~/.zshrc, or configure jira-cli)")
+		return nil, fmt.Errorf("JIRA_DOMAIN is required (set env var or run the setup wizard)")
 	}
 	if cfg.User == "" {
-		return nil, fmt.Errorf("JIRA_USER or JIRA_USERNAME is required (set env var, add to ~/.zshrc, or configure jira-cli)")
+		return nil, fmt.Errorf("JIRA_USER is required (set env var or run the setup wizard)")
 	}
 	if cfg.APIToken == "" {
-		return nil, fmt.Errorf("JIRA_API_TOKEN is required (set env var or add to ~/.zshrc / ~/.secrets.zsh)")
+		return nil, fmt.Errorf("JIRA_API_TOKEN is required (set env var or run the setup wizard)")
 	}
 
 	return cfg, nil
@@ -131,7 +110,7 @@ func (c *Config) applyEnvVars() error {
 	return nil
 }
 
-// applyProfile loads config from profiles.yaml for the given profile name.
+// applyProfile loads config from profiles.yml for the given profile name.
 // Returns true if a profile was found and applied.
 func (c *Config) applyProfile(name string) bool {
 	store, err := LoadProfiles()
@@ -187,42 +166,6 @@ func (c *Config) applyProfile(name string) bool {
 	return true
 }
 
-// applyZshCredentials fills missing config values from zsh config files.
-// Supports aliases: JIRA_URL → Domain (with protocol stripping), JIRA_USERNAME → User.
-func (c *Config) applyZshCredentials() {
-	creds := loadZshCredentials()
-
-	if c.Domain == "" {
-		if d := creds["JIRA_DOMAIN"]; d != "" {
-			c.Domain = d
-		} else if u := creds["JIRA_URL"]; u != "" {
-			c.Domain = stripProtocol(u)
-		}
-	}
-	if c.User == "" {
-		if u := creds["JIRA_USER"]; u != "" {
-			c.User = u
-		} else if u := creds["JIRA_USERNAME"]; u != "" {
-			c.User = u
-		}
-	}
-	if c.APIToken == "" {
-		c.APIToken = creds["JIRA_API_TOKEN"]
-	}
-	if c.AuthType == "basic" {
-		if at, ok := creds["JIRA_AUTH_TYPE"]; ok {
-			c.AuthType = at
-		}
-	}
-	if c.BoardID == 0 {
-		if bid, ok := creds["JIRA_BOARD_ID"]; ok {
-			if id, err := strconv.Atoi(bid); err == nil {
-				c.BoardID = id
-			}
-		}
-	}
-}
-
 // stripProtocol removes http:// or https:// prefix from a URL.
 func stripProtocol(url string) string {
 	for _, prefix := range []string{"https://", "http://"} {
@@ -247,18 +190,8 @@ func PartialLoadProfile(name string) (*Config, []string) {
 	// 1. Environment variables take priority (ignore errors for partial load).
 	_ = cfg.applyEnvVars()
 
-	// 1.5. Load from profile.
+	// 2. Load from profile.
 	cfg.applyProfile(name)
-
-	// 2. Fill gaps from zsh config files.
-	if cfg.Domain == "" || cfg.User == "" || cfg.APIToken == "" {
-		cfg.applyZshCredentials()
-	}
-
-	// 3. Fall back to jira-cli config.
-	if cfg.Domain == "" || cfg.User == "" {
-		_ = cfg.loadJiraCliConfig()
-	}
 
 	// Validate auth type silently.
 	switch cfg.AuthType {
@@ -288,7 +221,11 @@ func PartialLoadProfile(name string) (*Config, []string) {
 }
 
 // configDir returns the jiru config directory path.
+// Respects XDG_CONFIG_HOME; defaults to ~/.config/jiru.
 func configDir() (string, error) {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "jiru"), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -296,7 +233,7 @@ func configDir() (string, error) {
 	return filepath.Join(home, ".config", "jiru"), nil
 }
 
-// WriteConfigProfile saves config to a named profile in profiles.yaml.
+// WriteConfigProfile saves config to a named profile in profiles.yml.
 // The API token is stored in the OS keychain, not in the YAML file.
 func WriteConfigProfile(profile string, cfg *Config) error {
 	if profile == "" {
@@ -310,7 +247,7 @@ func WriteConfigProfile(profile string, cfg *Config) error {
 		}
 	}
 
-	// Save to profiles.yaml (without token).
+	// Save to profiles.yml (without token).
 	profileCfg := *cfg
 	profileCfg.APIToken = ""
 	if err := SaveProfile(profile, profileCfg); err != nil {
@@ -344,7 +281,7 @@ func setConfigEnv(cfg *Config) {
 	}
 }
 
-// ResetConfig removes profiles.yaml, all profile keyring entries,
+// ResetConfig removes profiles.yml, all profile keyring entries,
 // and any legacy config.env file.
 func ResetConfig() error {
 	// Delete keyring entries for all known profiles.
@@ -362,11 +299,11 @@ func ResetConfig() error {
 		return err
 	}
 
-	// Delete profiles.yaml.
-	if err := os.Remove(filepath.Join(dir, "profiles.yaml")); err != nil && !os.IsNotExist(err) {
+	// Delete profiles.yml.
+	if err := os.Remove(filepath.Join(dir, "profiles.yml")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	// Delete legacy config.env.
+	// Delete legacy config.env if it still exists.
 	if err := os.Remove(filepath.Join(dir, "config.env")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -381,108 +318,6 @@ func ResetConfig() error {
 		_ = os.Unsetenv(k)
 	}
 	return nil
-}
-
-// applyConfigFile fills missing config values from the legacy ~/.config/jiru/config.env.
-// Only used by MigrateToProfiles for backward-compatible migration.
-// If the API token is not in the file, it attempts to load it from the OS keychain.
-func (c *Config) applyConfigFile() {
-	dir, err := configDir()
-	if err != nil {
-		// Config dir unavailable — still try the keychain for the token.
-		if c.APIToken == "" {
-			if token, err := getKeyringToken(); err == nil && token != "" {
-				c.APIToken = token
-			}
-		}
-		return
-	}
-	path := filepath.Join(dir, "config.env")
-	exports, err := parseZshExports(path) // Same format — reuse parser.
-	if err != nil {
-		// Config file doesn't exist — still try the keychain for the token.
-		if c.APIToken == "" {
-			if token, err := getKeyringToken(); err == nil && token != "" {
-				c.APIToken = token
-			}
-		}
-		return
-	}
-	if c.Domain == "" {
-		if d := exports["JIRA_DOMAIN"]; d != "" {
-			c.Domain = d
-		}
-	}
-	if c.User == "" {
-		if u := exports["JIRA_USER"]; u != "" {
-			c.User = u
-		}
-	}
-	fileToken := exports["JIRA_API_TOKEN"]
-	if c.APIToken == "" {
-		c.APIToken = fileToken
-	}
-	if c.AuthType == "basic" {
-		if at, ok := exports["JIRA_AUTH_TYPE"]; ok {
-			c.AuthType = at
-		}
-	}
-	if c.BoardID == 0 {
-		if bid, ok := exports["JIRA_BOARD_ID"]; ok {
-			if id, err := strconv.Atoi(bid); err == nil {
-				c.BoardID = id
-			}
-		}
-	}
-	if c.Project == "" {
-		c.Project = exports["JIRA_PROJECT"]
-	}
-	if c.RepoPath == "" {
-		c.RepoPath = expandTilde(exports["JIRA_REPO_PATH"])
-	}
-	if !c.BranchUppercase {
-		c.BranchUppercase = exports["JIRA_BRANCH_UPPERCASE"] == "true"
-	}
-	if c.BranchMode == "" {
-		c.BranchMode = exports["JIRA_BRANCH_MODE"]
-	}
-
-	// If the token was not in the config file, try the OS keychain.
-	if c.APIToken == "" {
-		if token, err := getKeyringToken(); err == nil && token != "" {
-			c.APIToken = token
-		}
-	}
-
-	// Migrate: if the token is in the config file but not in the keychain,
-	// move it to the keychain and rewrite the file without the token.
-	if fileToken != "" {
-		if err := migrateTokenToKeyring(path, fileToken); err == nil {
-			c.APIToken = fileToken
-		}
-	}
-}
-
-// migrateTokenToKeyring moves an API token from the config file into the OS
-// keychain and rewrites the config file without the token line.
-func migrateTokenToKeyring(configPath, token string) error {
-	if err := setKeyringToken(token); err != nil {
-		return err // Keychain unavailable — leave the file as-is.
-	}
-
-	// Rewrite the config file without the JIRA_API_TOKEN line.
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
-	}
-	var kept []string
-	for line := range strings.SplitSeq(string(data), "\n") {
-		if strings.Contains(line, "JIRA_API_TOKEN") {
-			continue
-		}
-		kept = append(kept, line)
-	}
-	return os.WriteFile(configPath, []byte(strings.Join(kept, "\n")), 0o600)
 }
 
 // ServerURL returns the full Jira server URL.
@@ -500,36 +335,4 @@ func expandTilde(s string) string {
 		return s
 	}
 	return filepath.Join(home, s[1:])
-}
-
-func (c *Config) loadJiraCliConfig() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	path := filepath.Join(home, ".config", ".jira", ".config.yml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	var jcfg jiraCliConfig
-	if err := yaml.Unmarshal(data, &jcfg); err != nil {
-		return err
-	}
-
-	if c.Domain == "" && jcfg.Server != "" {
-		c.Domain = stripProtocol(jcfg.Server)
-	}
-
-	if c.User == "" && jcfg.Login != "" {
-		c.User = jcfg.Login
-	}
-
-	if c.BoardID == 0 && jcfg.Board != nil {
-		c.BoardID = jcfg.Board.ID
-	}
-
-	return nil
 }

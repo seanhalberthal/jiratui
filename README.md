@@ -49,30 +49,27 @@ brew install seanhalberthal/tap/jiru
 
 ## Configuration
 
-On first launch, if required credentials are missing, jiru shows an interactive setup wizard that validates credentials against the Jira API and stores the API token in the OS keychain (macOS Keychain or SecretService on Linux). Other settings are saved to `~/.config/jiru/profiles.yaml`. Re-open the wizard at any time with `S`.
+On first launch, if required credentials are missing, jiru shows an interactive setup wizard that validates credentials against the Jira API and stores the API token in the OS keychain (macOS Keychain or SecretService on Linux). Other settings are saved to `~/.config/jiru/profiles.yml`. Re-open the wizard at any time with `S`.
 
 ### Profiles
 
 jiru supports multiple named profiles for different Jira instances (e.g. work, staging). Use `--profile <name>` or `P` from the TUI to switch between profiles. Each profile stores its own credentials, project, board, and branch settings.
 
-Configuration is resolved from four sources, in priority order:
+Settings are stored in `$XDG_CONFIG_HOME/jiru/profiles.yml` (defaults to `~/.config/jiru/`) and the API token is kept in the OS keychain. The setup wizard handles all of this automatically.
 
-1. **Environment variables** — always take precedence
-2. **jiru profiles** — `~/.config/jiru/profiles.yaml` (written by the setup wizard)
-3. **Zsh config files** — scans `~/.zshenv`, `~/.zprofile`, `~/.zshrc`, `~/.secrets.zsh`, `~/.config/secrets.zsh`, and `~/.config/zsh/secrets.zsh` for `export` statements
-4. **jira-cli config** — falls back to `~/.config/.jira/.config.yml` for domain, user, and board ID
+Environment variables can override profile settings when needed (e.g. for CI or scripting):
 
-| Variable | Alias | Purpose | Required |
-|---|---|---|---|
-| `JIRA_DOMAIN` | `JIRA_URL` | Jira instance domain, e.g. `yourorg.atlassian.net` | Yes |
-| `JIRA_USER` | `JIRA_USERNAME` | Atlassian email address | Yes |
-| `JIRA_API_TOKEN` | | [API token](https://id.atlassian.com/manage-profile/security/api-tokens) or PAT | Yes |
-| `JIRA_AUTH_TYPE` | | `basic` (default) or `bearer` | No |
-| `JIRA_BOARD_ID` | | Board ID — skips the home screen when set | No |
-| `JIRA_PROJECT` | | Project key to filter the board list | No |
-| `JIRA_REPO_PATH` | | Path to local git repo for branch creation | No |
-| `JIRA_BRANCH_UPPERCASE` | | `true` for Title-Case branch names (e.g. `PROJ-123-Fix-Login-Bug`) | No |
-| `JIRA_BRANCH_MODE` | | Branch creation mode: `local`, `remote`, or `both` (default: `local`) | No |
+| Variable | Alias | Purpose |
+|---|---|---|
+| `JIRA_DOMAIN` | `JIRA_URL` | Jira instance domain, e.g. `yourorg.atlassian.net` |
+| `JIRA_USER` | `JIRA_USERNAME` | Atlassian email address |
+| `JIRA_API_TOKEN` | | [API token](https://id.atlassian.com/manage-profile/security/api-tokens) or PAT |
+| `JIRA_AUTH_TYPE` | | `basic` (default) or `bearer` |
+| `JIRA_BOARD_ID` | | Board ID — skips the home screen when set |
+| `JIRA_PROJECT` | | Project key to filter the board list |
+| `JIRA_REPO_PATH` | | Path to local git repo for branch creation |
+| `JIRA_BRANCH_UPPERCASE` | | `true` for Title-Case branch names (e.g. `PROJ-123-Fix-Login-Bug`) |
+| `JIRA_BRANCH_MODE` | | Branch creation mode: `local`, `remote`, or `both` (default: `local`) |
 
 The aliases (`JIRA_URL`, `JIRA_USERNAME`) provide compatibility with tools like mcp-atlassian that use different variable names. `JIRA_DOMAIN` strips the protocol automatically if provided.
 

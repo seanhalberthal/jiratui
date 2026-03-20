@@ -21,16 +21,28 @@ func SetProfile(profile string) {
 	activeProfile = profile
 }
 
-// filtersPath returns the path to the filters YAML file.
-func filtersPath() (string, error) {
+// configDir returns the jiru config directory, respecting XDG_CONFIG_HOME.
+func configDir() (string, error) {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "jiru"), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	if activeProfile == "" || activeProfile == "default" {
-		return filepath.Join(home, ".config", "jiru", "filters.yaml"), nil
+	return filepath.Join(home, ".config", "jiru"), nil
+}
+
+// filtersPath returns the path to the filters YAML file.
+func filtersPath() (string, error) {
+	dir, err := configDir()
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(home, ".config", "jiru", "filters-"+activeProfile+".yaml"), nil
+	if activeProfile == "" || activeProfile == "default" {
+		return filepath.Join(dir, "filters.yml"), nil
+	}
+	return filepath.Join(dir, "filters-"+activeProfile+".yml"), nil
 }
 
 // Load reads all saved filters from disk.

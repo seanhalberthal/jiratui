@@ -8,7 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ProfileStore manages ~/.config/jiru/profiles.yaml.
+// ProfileStore manages ~/.config/jiru/profiles.yml.
 type ProfileStore struct {
 	Active   string            `yaml:"active"`
 	Profiles map[string]Config `yaml:"profiles"`
@@ -26,10 +26,10 @@ func profilesPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "profiles.yaml"), nil
+	return filepath.Join(dir, "profiles.yml"), nil
 }
 
-// LoadProfiles reads ~/.config/jiru/profiles.yaml.
+// LoadProfiles reads ~/.config/jiru/profiles.yml.
 // Returns nil (not an error) if the file does not exist.
 func LoadProfiles() (*ProfileStore, error) {
 	path, err := profilesPath()
@@ -71,7 +71,7 @@ func saveProfiles(store *ProfileStore) error {
 }
 
 // ActiveProfile returns the active profile entry.
-// If profiles.yaml doesn't exist, returns nil.
+// If profiles.yml doesn't exist, returns nil.
 func ActiveProfile() (*ProfileEntry, error) {
 	store, err := LoadProfiles()
 	if err != nil {
@@ -91,7 +91,7 @@ func ActiveProfile() (*ProfileEntry, error) {
 	return &ProfileEntry{Name: name, Config: cfg}, nil
 }
 
-// SwitchProfile updates the active profile in profiles.yaml.
+// SwitchProfile updates the active profile in profiles.yml.
 func SwitchProfile(name string) error {
 	store, err := LoadProfiles()
 	if err != nil {
@@ -158,60 +158,6 @@ func DeleteProfile(name string) error {
 		store.Active = "default"
 	}
 	return saveProfiles(store)
-}
-
-// MigrateToProfiles creates a default profile from existing config.env on first run.
-// Idempotent: skips if profiles.yaml already exists.
-func MigrateToProfiles() error {
-	store, err := LoadProfiles()
-	if err != nil {
-		return err
-	}
-	if store != nil {
-		return nil // Already migrated.
-	}
-
-	// Load existing config the old way.
-	cfg := &Config{AuthType: "basic"}
-	cfg.applyConfigFile()
-	if cfg.Domain == "" && cfg.User == "" {
-		return nil // No existing config to migrate.
-	}
-
-	// Don't store the API token in the profile YAML — it stays in the keyring.
-	// The default profile uses the existing keyring key "api-token".
-	apiToken := cfg.APIToken
-	cfg.APIToken = ""
-
-	store = &ProfileStore{
-		Active:   "default",
-		Profiles: map[string]Config{"default": *cfg},
-	}
-
-	if err := saveProfiles(store); err != nil {
-		return err
-	}
-
-	// Ensure the token is in the keyring under the default profile key.
-	if apiToken != "" {
-		_ = setKeyringTokenForProfile("default", apiToken)
-	}
-
-	// Clean up legacy config.env now that migration is complete.
-	if path, err := configEnvPath(); err == nil {
-		_ = os.Remove(path)
-	}
-
-	return nil
-}
-
-// configEnvPath returns the path to the legacy config.env file.
-func configEnvPath() (string, error) {
-	dir, err := configDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "config.env"), nil
 }
 
 // ActiveProfileName returns just the active profile name, or "" if no profiles exist.

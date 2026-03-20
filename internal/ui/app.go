@@ -381,7 +381,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 			if len(profiles) == 0 {
-				// No profiles.yaml yet — show single "default" entry.
+				// No profiles.yml yet — show single "default" entry.
 				profiles = []string{"default"}
 			}
 			a.profile = profileview.New(profiles, a.profileName)
@@ -456,6 +456,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				JQL:        msg.JQL,
 				Project:    msg.Project,
 				Seq:        msg.Seq,
+				NextToken:  msg.NextToken,
 			})
 		}
 		// Single page — populate board immediately.
@@ -1463,7 +1464,13 @@ func (a App) verifyAuth() tea.Cmd {
 func (a App) fetchSprintIssues(sprintID int, sprintName string) tea.Cmd {
 	seq := a.paginationSeq
 	return func() tea.Msg {
-		page, err := a.client.SprintIssuesPage(sprintID, 0, client.DefaultPageSize)
+		// Use v3 JQL search instead of the Agile v1 sprint endpoint.
+		// The Agile v1 API has an undocumented truncation limit on Jira Cloud
+		// (~1000 issues) where it returns empty pages despite reporting more.
+		// The v3 /search/jql endpoint uses cursor-based pagination and does
+		// not suffer from this limitation.
+		jql := fmt.Sprintf("sprint = %d ORDER BY updated DESC", sprintID)
+		page, err := a.client.SearchJQLPage(jql, client.DefaultPageSize, 0, "")
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
@@ -1480,6 +1487,8 @@ func (a App) fetchSprintIssues(sprintID int, sprintName string) tea.Cmd {
 			From:       len(page.Issues),
 			SprintID:   sprintID,
 			SprintName: sprintName,
+			JQL:        jql,
+			NextToken:  page.NextToken,
 			Seq:        seq,
 		}
 	}
@@ -1495,20 +1504,22 @@ func (a App) fetchMoreIssues(msg IssuesPageMsg) tea.Cmd {
 		from := msg.From
 		nextToken := msg.NextToken
 		hasMore := true
+		source := msg.Source
+		jql := msg.JQL
 
 		for range pagesPerBatch {
 			var page *client.PageResult
 			var err error
 
-			switch msg.Source {
-			case "sprint":
-				page, err = a.client.SprintIssuesPage(msg.SprintID, from, client.DefaultPageSize)
+			switch source {
+			case "sprint", "epic", "board", "search":
+				// All issue loading uses v3 JQL cursor-based search.
+				// Sprint and epic previously used Agile v1 endpoints, but
+				// those have an undocumented truncation limit on Jira Cloud
+				// (~1000 issues). The v3 /search/jql endpoint does not.
+				page, err = a.client.SearchJQLPage(jql, client.DefaultPageSize, from, nextToken)
 			case "boardapi":
 				page, err = a.client.BoardIssuesPage(msg.SprintID, from, client.DefaultPageSize)
-			case "board", "search":
-				page, err = a.client.SearchJQLPage(msg.JQL, client.DefaultPageSize, from, nextToken)
-			case "epic":
-				page, err = a.client.EpicIssuesPage(msg.EpicKey, from, client.DefaultPageSize)
 			}
 
 			if err != nil {
@@ -1517,6 +1528,13 @@ func (a App) fetchMoreIssues(msg IssuesPageMsg) tea.Cmd {
 
 			allIssues = append(allIssues, page.Issues...)
 			from += len(page.Issues)
+
+			// Detect cursor loop — Jira Cloud has a known bug where
+			// nextPageToken can repeat, returning the same page forever.
+			if page.NextToken == nextToken && nextToken != "" {
+				hasMore = false
+				break
+			}
 			nextToken = page.NextToken
 			hasMore = page.HasMore && from < client.MaxTotalIssues
 
@@ -1532,12 +1550,12 @@ func (a App) fetchMoreIssues(msg IssuesPageMsg) tea.Cmd {
 		return IssuesPageMsg{
 			Issues:     enriched,
 			HasMore:    hasMore,
-			Source:     msg.Source,
+			Source:     source,
 			From:       from,
 			SprintID:   msg.SprintID,
 			SprintName: msg.SprintName,
 			EpicKey:    msg.EpicKey,
-			JQL:        msg.JQL,
+			JQL:        jql,
 			Project:    msg.Project,
 			Seq:        msg.Seq,
 			NextToken:  nextToken,
@@ -1900,9 +1918,41 @@ func (a App) fetchActiveSprintForBoard(boardID int) tea.Cmd {
 			return SprintLoadedMsg{Sprint: &sprints[0]}
 		}
 
-		// No active sprint — fetch board issues via the Agile API directly.
-		// This uses /board/{id}/issue with reliable offset-based pagination,
-		// avoiding the broken /search/jql token pagination and deprecated /search.
+		// No active sprint — fetch board issues via v3 JQL search using
+		// the board's filter. The Agile v1 /board/{id}/issue endpoint has
+		// an undocumented truncation limit on Jira Cloud (~1000 issues)
+		// where it returns empty pages despite reporting more results.
+		jql, filterErr := a.client.BoardFilterJQL(boardID)
+		if filterErr == nil && jql != "" {
+			// Replace any existing ORDER BY with updated DESC so the most
+			// recently edited issues load first during progressive pagination.
+			if idx := strings.Index(strings.ToUpper(jql), "ORDER BY"); idx >= 0 {
+				jql = strings.TrimSpace(jql[:idx])
+			}
+			jql += " ORDER BY updated DESC"
+
+			page, searchErr := a.client.SearchJQLPage(jql, client.DefaultPageSize, 0, "")
+			if searchErr != nil {
+				return ErrMsg{Err: searchErr}
+			}
+
+			parents := a.client.ResolveParents(page.Issues)
+			enriched := client.EnrichWithParents(page.Issues, parents)
+
+			return IssuesLoadedMsg{
+				Issues:    enriched,
+				Title:     "Board",
+				HasMore:   page.HasMore,
+				Source:    "board",
+				From:      len(page.Issues),
+				SprintID:  boardID,
+				JQL:       jql,
+				NextToken: page.NextToken,
+				Seq:       seq,
+			}
+		}
+
+		// Fallback: board filter unavailable — use Agile v1 directly.
 		page, fetchErr := a.client.BoardIssuesPage(boardID, 0, client.DefaultPageSize)
 		if fetchErr != nil {
 			return ErrMsg{Err: fmt.Errorf("no active iteration and board issue fetch failed: %w", fetchErr)}
@@ -1917,7 +1967,7 @@ func (a App) fetchActiveSprintForBoard(boardID int) tea.Cmd {
 			HasMore:  page.HasMore,
 			Source:   "boardapi",
 			From:     len(page.Issues),
-			SprintID: boardID, // Carries board ID for pagination.
+			SprintID: boardID,
 			Seq:      seq,
 		}
 	}

@@ -161,7 +161,7 @@ func TestLoadProfiles_NoFileReturnsNil(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if store != nil {
-		t.Error("expected nil store when profiles.yaml does not exist")
+		t.Error("expected nil store when profiles.yml does not exist")
 	}
 }
 
@@ -183,7 +183,7 @@ profiles:
     domain: staging.atlassian.net
     user: staging@example.com
 `
-	if err := os.WriteFile(filepath.Join(cfgDir, "profiles.yaml"), []byte(yamlContent), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgDir, "profiles.yml"), []byte(yamlContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -210,7 +210,7 @@ func TestLoadProfiles_InvalidYAMLReturnsError(t *testing.T) {
 	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cfgDir, "profiles.yaml"), []byte("{{invalid yaml"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgDir, "profiles.yml"), []byte("{{invalid yaml"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -375,9 +375,9 @@ func TestSaveProfile_CreatesProfilesYAML(t *testing.T) {
 	}
 
 	// Verify the file was created.
-	path := filepath.Join(dir, ".config", "jiru", "profiles.yaml")
+	path := filepath.Join(dir, ".config", "jiru", "profiles.yml")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		t.Fatal("profiles.yaml was not created")
+		t.Fatal("profiles.yml was not created")
 	}
 
 	// Verify content.
@@ -587,7 +587,7 @@ func TestSwitchProfile_NoProfilesFileNoOp(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
-	// No profiles.yaml exists — should be a no-op, no error.
+	// No profiles.yml exists — should be a no-op, no error.
 	if err := SwitchProfile("anything"); err != nil {
 		t.Fatalf("SwitchProfile failed: %v", err)
 	}
@@ -684,7 +684,7 @@ func TestDeleteProfile_NoProfilesFileNoOp(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
-	// No profiles.yaml — should be a no-op, no error.
+	// No profiles.yml — should be a no-op, no error.
 	if err := DeleteProfile("anything"); err != nil {
 		t.Fatalf("DeleteProfile failed: %v", err)
 	}
@@ -767,7 +767,7 @@ func TestDeleteKeyringTokenForProfile(t *testing.T) {
 
 // --- helpers ---
 
-// writeTestProfiles writes a ProfileStore to profiles.yaml in the given home dir.
+// writeTestProfiles writes a ProfileStore to profiles.yml in the given home dir.
 func writeTestProfiles(t *testing.T, homeDir string, store *ProfileStore) {
 	t.Helper()
 	cfgDir := filepath.Join(homeDir, ".config", "jiru")
@@ -778,7 +778,7 @@ func writeTestProfiles(t *testing.T, homeDir string, store *ProfileStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cfgDir, "profiles.yaml"), data, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgDir, "profiles.yml"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

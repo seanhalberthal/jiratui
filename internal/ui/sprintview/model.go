@@ -122,7 +122,9 @@ func (m Model) AppendIssues(issues []jira.Issue) Model {
 
 	items := issuedelegate.ToItems(m.issues)
 	m.list.SetItems(items)
-	m.list.Title = fmt.Sprintf("Issues (%d)", len(m.issues))
+	// AppendIssues is only called during progressive loading, so always show
+	// the loading indicator. SetLoading(false) clears it when all pages arrive.
+	m.list.Title = fmt.Sprintf("Issues (%d) loading...", len(m.issues))
 	return m
 }
 

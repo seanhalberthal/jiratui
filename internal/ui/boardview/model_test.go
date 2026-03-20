@@ -107,6 +107,91 @@ func TestColumnNavigation(t *testing.T) {
 	}
 }
 
+func TestColumnNavigationCarriesCursor(t *testing.T) {
+	// Build a board with columns of different sizes:
+	// "To Do" has 6 issues, "In Progress" has 4, "Done" has 2.
+	issues := []jira.Issue{
+		{Key: "A-1", Status: "To Do"}, {Key: "A-2", Status: "To Do"},
+		{Key: "A-3", Status: "To Do"}, {Key: "A-4", Status: "To Do"},
+		{Key: "A-5", Status: "To Do"}, {Key: "A-6", Status: "To Do"},
+		{Key: "B-1", Status: "In Progress"}, {Key: "B-2", Status: "In Progress"},
+		{Key: "B-3", Status: "In Progress"}, {Key: "B-4", Status: "In Progress"},
+		{Key: "C-1", Status: "Done"}, {Key: "C-2", Status: "Done"},
+	}
+	m := New()
+	m.SetSize(120, 80)
+	m.SetIssues(issues, "Board")
+
+	// Sanity check column sizes.
+	if len(m.columns[0].issues) != 6 {
+		t.Fatalf("expected 6 To Do issues, got %d", len(m.columns[0].issues))
+	}
+	if len(m.columns[1].issues) != 4 {
+		t.Fatalf("expected 4 In Progress issues, got %d", len(m.columns[1].issues))
+	}
+	if len(m.columns[2].issues) != 2 {
+		t.Fatalf("expected 2 Done issues, got %d", len(m.columns[2].issues))
+	}
+
+	// Move to card 6 (index 5) in "To Do".
+	for i := 0; i < 5; i++ {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	}
+	if m.columns[0].cursor != 5 {
+		t.Fatalf("expected To Do cursor 5, got %d", m.columns[0].cursor)
+	}
+
+	// Move right to "In Progress" (4 issues) — cursor should clamp to 3.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
+	if m.columns[1].cursor != 3 {
+		t.Errorf("expected In Progress cursor 3 (clamped from 5), got %d", m.columns[1].cursor)
+	}
+
+	// Move right to "Done" (2 issues) — cursor should clamp to 1.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
+	if m.columns[2].cursor != 1 {
+		t.Errorf("expected Done cursor 1 (clamped from 3), got %d", m.columns[2].cursor)
+	}
+
+	// Move left back to "In Progress" — cursor should carry 1 (fits, since 4 issues).
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	if m.columns[1].cursor != 1 {
+		t.Errorf("expected In Progress cursor 1 (carried from Done), got %d", m.columns[1].cursor)
+	}
+
+	// Move left back to "To Do" — cursor should carry 1 (fits, since 6 issues).
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	if m.columns[0].cursor != 1 {
+		t.Errorf("expected To Do cursor 1 (carried from In Progress), got %d", m.columns[0].cursor)
+	}
+}
+
+func TestColumnNavigationCarriesCursorExactFit(t *testing.T) {
+	// When the target column has enough issues, the cursor position is preserved exactly.
+	issues := []jira.Issue{
+		{Key: "A-1", Status: "To Do"}, {Key: "A-2", Status: "To Do"},
+		{Key: "A-3", Status: "To Do"},
+		{Key: "B-1", Status: "In Progress"}, {Key: "B-2", Status: "In Progress"},
+		{Key: "B-3", Status: "In Progress"}, {Key: "B-4", Status: "In Progress"},
+		{Key: "B-5", Status: "In Progress"}, {Key: "B-6", Status: "In Progress"},
+	}
+	m := New()
+	m.SetSize(120, 80)
+	m.SetIssues(issues, "Board")
+
+	// Move to card 2 (index 1) in "To Do".
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if m.columns[0].cursor != 1 {
+		t.Fatalf("expected To Do cursor 1, got %d", m.columns[0].cursor)
+	}
+
+	// Move right to "In Progress" (6 issues) — cursor should stay at 1.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
+	if m.columns[1].cursor != 1 {
+		t.Errorf("expected In Progress cursor 1 (exact carry), got %d", m.columns[1].cursor)
+	}
+}
+
 func TestVerticalNavigation(t *testing.T) {
 	m := New()
 	m.SetSize(120, 40)

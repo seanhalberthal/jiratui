@@ -223,13 +223,17 @@ func (m *Model) visibleColumnRange() (int, int) {
 
 func (m *Model) nextColumn() {
 	if m.activeCol < len(m.columns)-1 {
+		prev := m.columns[m.activeCol].cursor
 		m.activeCol++
+		m.columns[m.activeCol].setCursor(prev)
 	}
 }
 
 func (m *Model) prevColumn() {
 	if m.activeCol > 0 {
+		prev := m.columns[m.activeCol].cursor
 		m.activeCol--
+		m.columns[m.activeCol].setCursor(prev)
 	}
 }
 
