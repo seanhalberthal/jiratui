@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Named profiles — multiple Jira instances via `--profile <name>` flag or `P` in the TUI, with per-profile keychain storage
+- CLI subcommands — `jiru get`, `jiru search`, `jiru list`, `jiru boards` for JSON output
+- Profile management view (`P`) — create, switch, and delete profiles from the TUI
+- Edit issue view (`e` from issue view) — edit summary and priority inline
+- Auto-migration from legacy `config.env` to `profiles.yaml` on first run
+
+### Changed
+
+- Config storage migrated from `~/.config/jiru/config.env` to `~/.config/jiru/profiles.yaml`
+- `ResetConfig` now cleans up profiles.yaml, all profile keyring entries, and legacy config.env
+
 ### Fixed
 
 - Status transition now shows the target status name (e.g., "Code Review") instead of the transition action name (e.g., "Review code")
