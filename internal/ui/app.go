@@ -117,6 +117,7 @@ type App struct {
 	statusMsg        string
 	statusMsgTime    time.Time // When the status message was set.
 	err              error
+	retryCmd         tea.Cmd // Command to retry on 'r' from the error dialog.
 	boardID          int
 	directIssue      string
 	needsSetup       bool
@@ -249,15 +250,22 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
-		// Dismiss error overlay on esc/q.
+		// Handle error overlay: esc/q dismiss, r retries.
 		if a.err != nil {
 			if a.isBackKey(msg) {
 				a.err = nil
+				a.retryCmd = nil
 				// If stuck at loading (nothing will re-trigger), navigate back.
 				if a.active == viewLoading {
 					return a.navigateBack()
 				}
 				return a, nil
+			}
+			if msg.String() == "r" && a.retryCmd != nil {
+				retry := a.retryCmd
+				a.err = nil
+				a.retryCmd = nil
+				return a, retry
 			}
 			// Swallow all other keys while error is showing.
 			return a, nil
@@ -892,6 +900,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ErrMsg:
 		a.err = sanitiseError(msg.Err)
+		a.retryCmd = a.refreshCurrentView()
 		// Clear loading state — pagination errors should not leave the UI stuck.
 		a.issueList = a.issueList.SetLoading(false)
 		return a, nil
@@ -1365,11 +1374,20 @@ func (a App) View() string {
 	}
 
 	if a.err != nil {
+		var hint string
+		if a.retryCmd != nil {
+			hint = theme.StyleHelpKey.Render("r") + " " + theme.StyleHelpDesc.Render("retry") + "  " +
+				theme.StyleHelpKey.Render("esc") + " " + theme.StyleHelpDesc.Render("dismiss")
+		} else {
+			hint = theme.StyleHelpKey.Render("esc") + " " + theme.StyleHelpDesc.Render("dismiss")
+		}
 		errBox := theme.StyleErrorDialog.Width(a.width / 2).Render(
 			lipgloss.JoinVertical(lipgloss.Center,
 				theme.StyleError.Render("Error"),
 				"",
 				theme.StyleSubtle.Render(a.err.Error()),
+				"",
+				hint,
 			),
 		)
 		content = lipgloss.Place(a.width, a.height-2, lipgloss.Center, lipgloss.Center, errBox)
