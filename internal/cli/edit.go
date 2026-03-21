@@ -85,6 +85,9 @@ Description accepts:
 	return cmd
 }
 
+// maxInputBytes is the maximum size of content read from stdin or file (1 MiB).
+const maxInputBytes = 1 << 20
+
 // resolveInput reads content from a flag value:
 //   - empty string: returns empty (no change)
 //   - "-": reads from stdin
@@ -95,14 +98,19 @@ func resolveInput(value string) (string, error) {
 		return "", nil
 	}
 	if value == "-" {
-		data, err := io.ReadAll(os.Stdin)
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, maxInputBytes))
 		if err != nil {
 			return "", err
 		}
 		return string(data), nil
 	}
 	if strings.HasPrefix(value, "@") {
-		data, err := os.ReadFile(value[1:])
+		f, err := os.Open(value[1:])
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = f.Close() }()
+		data, err := io.ReadAll(io.LimitReader(f, maxInputBytes))
 		if err != nil {
 			return "", err
 		}

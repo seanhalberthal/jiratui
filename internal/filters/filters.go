@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -33,6 +34,16 @@ func configDir() (string, error) {
 	return filepath.Join(home, ".config", "jiru"), nil
 }
 
+// sanitiseProfile removes path separators and leading dots from a profile name.
+func sanitiseProfile(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == 0 {
+			return '_'
+		}
+		return r
+	}, strings.TrimLeft(name, "."))
+}
+
 // filtersPath returns the path to the filters YAML file.
 func filtersPath() (string, error) {
 	dir, err := configDir()
@@ -42,7 +53,7 @@ func filtersPath() (string, error) {
 	if activeProfile == "" || activeProfile == "default" {
 		return filepath.Join(dir, "filters.yml"), nil
 	}
-	return filepath.Join(dir, "filters-"+activeProfile+".yml"), nil
+	return filepath.Join(dir, "filters-"+sanitiseProfile(activeProfile)+".yml"), nil
 }
 
 // Load reads all saved filters from disk.

@@ -46,6 +46,9 @@ func (c *Client) ConfluenceSpaces() ([]confluence.Space, error) {
 		}
 		// The next URL is a full path — extract path+query portion.
 		path = extractPath(result.Links.Next)
+		if path == "" {
+			break
+		}
 	}
 
 	return all, nil
@@ -53,7 +56,7 @@ func (c *Client) ConfluenceSpaces() ([]confluence.Space, error) {
 
 // ConfluencePage fetches a single Confluence page by ID, including its ADF body.
 func (c *Client) ConfluencePage(pageID string) (*confluence.Page, error) {
-	path := api.Wiki(fmt.Sprintf("/pages/%s?body-format=atlas_doc_format", pageID))
+	path := api.Wiki(fmt.Sprintf("/pages/%s?body-format=atlas_doc_format", url.PathEscape(pageID)))
 
 	resp, err := c.http.Get(context.Background(), path)
 	if err != nil {
@@ -69,7 +72,7 @@ func (c *Client) ConfluencePage(pageID string) (*confluence.Page, error) {
 
 // ConfluencePageAncestors returns the ancestor chain for a page (root → immediate parent).
 func (c *Client) ConfluencePageAncestors(pageID string) ([]confluence.PageAncestor, error) {
-	path := api.Wiki(fmt.Sprintf("/pages/%s/ancestors", pageID))
+	path := api.Wiki(fmt.Sprintf("/pages/%s/ancestors", url.PathEscape(pageID)))
 
 	resp, err := c.http.Get(context.Background(), path)
 	if err != nil {
@@ -95,7 +98,7 @@ func (c *Client) ConfluenceSpacePages(spaceID string, limit int) ([]confluence.P
 	if limit <= 0 {
 		limit = 50
 	}
-	path := api.Wiki(fmt.Sprintf("/spaces/%s/pages?limit=%d&sort=title", spaceID, limit))
+	path := api.Wiki(fmt.Sprintf("/spaces/%s/pages?limit=%d&sort=title", url.PathEscape(spaceID), limit))
 
 	resp, err := c.http.Get(context.Background(), path)
 	if err != nil {
@@ -130,7 +133,7 @@ func (c *Client) UpdateConfluencePage(pageID, title, bodyADF string, version int
 		},
 	}
 
-	path := api.Wiki(fmt.Sprintf("/pages/%s", pageID))
+	path := api.Wiki(fmt.Sprintf("/pages/%s", url.PathEscape(pageID)))
 	resp, err := c.http.Put(context.Background(), path, body)
 	if err != nil {
 		return nil, fmt.Errorf("update confluence page %s: %w", pageID, err)
@@ -175,7 +178,7 @@ func (c *Client) ConfluenceSearchCQL(cql string, limit int) ([]confluence.PageSe
 
 // ConfluencePageURL returns the browser URL for a Confluence page.
 func (c *Client) ConfluencePageURL(pageID string) string {
-	return c.config.ServerURL() + "/wiki/pages/" + pageID
+	return c.config.ServerURL() + "/wiki/pages/" + url.PathEscape(pageID)
 }
 
 // RemoteLinks returns the remote links for a Jira issue, filtered to those
@@ -266,10 +269,11 @@ func convertConfluencePage(p *api.ConfluencePage) *confluence.Page {
 }
 
 // extractPath strips the scheme+host from a full URL, returning just the path+query.
+// Returns empty string on parse failure — callers treat this as a pagination terminator.
 func extractPath(fullURL string) string {
 	u, err := url.Parse(fullURL)
-	if err != nil {
-		return fullURL
+	if err != nil || u.Path == "" {
+		return ""
 	}
 	if u.RawQuery != "" {
 		return u.Path + "?" + u.RawQuery

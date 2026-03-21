@@ -13,6 +13,15 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
+// safeURL strips dangerous URL schemes (javascript:, data:, vbscript:).
+func safeURL(u string) string {
+	lower := strings.ToLower(strings.TrimSpace(u))
+	if strings.HasPrefix(lower, "javascript:") || strings.HasPrefix(lower, "data:") || strings.HasPrefix(lower, "vbscript:") {
+		return ""
+	}
+	return u
+}
+
 // --- ADF → Markdown ---
 
 // ToMarkdown converts an ADF JSON string to CommonMark markdown.
@@ -307,7 +316,7 @@ func renderMediaToMarkdown(buf *strings.Builder, node Node, prefix string) {
 			}
 		}
 		buf.WriteString(prefix)
-		fmt.Fprintf(buf, "![%s](%s)\n", alt, url)
+		fmt.Fprintf(buf, "![%s](%s)\n", alt, safeURL(url))
 	}
 }
 
@@ -395,10 +404,12 @@ func applyMarksMarkdown(text string, marks []Mark) string {
 			href := ""
 			if h, ok := m.Attrs["href"]; ok {
 				if hs, ok := h.(string); ok {
-					href = hs
+					href = safeURL(hs)
 				}
 			}
-			text = "[" + text + "](" + href + ")"
+			if href != "" {
+				text = "[" + text + "](" + href + ")"
+			}
 		case "underline":
 			text = "<u>" + text + "</u>"
 		case "subsup":

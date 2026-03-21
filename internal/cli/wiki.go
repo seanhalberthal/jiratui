@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/seanhalberthal/jiru/internal/adf"
+	"github.com/seanhalberthal/jiru/internal/validate"
 )
 
 // WikiCmd returns the 'wiki' command group for Confluence operations.
@@ -46,6 +47,9 @@ func wikiPagesCmd() *cobra.Command {
 Use 'jiru wiki spaces' to list spaces and find the numeric ID in the "id" field.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
+			if err := validate.ConfluenceID(args[0]); err != nil {
+				return err
+			}
 			pages, err := Client().ConfluenceSpacePages(args[0], limit)
 			if err != nil {
 				return err
@@ -109,6 +113,9 @@ Output format is controlled by --format:
   adf        Raw ADF JSON body only`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
+			if err := validate.ConfluenceID(args[0]); err != nil {
+				return err
+			}
 			page, err := Client().ConfluencePage(args[0])
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\nHint: make sure you provide a page ID, not a space ID.\n"+
@@ -160,6 +167,9 @@ Format controls how the body is interpreted:
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			pageID := args[0]
+			if err := validate.ConfluenceID(pageID); err != nil {
+				return err
+			}
 			c := Client()
 
 			if title == "" && body == "" {

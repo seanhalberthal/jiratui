@@ -107,16 +107,6 @@ func (m *Model) SelectedPage() *selectedPage {
 	return p
 }
 
-// NeedsSpacePages returns the space ID that needs pages fetched, or empty string.
-func (m *Model) NeedsSpacePages() string {
-	return ""
-}
-
-// SpaceSelected returns the selected space ID if a space was drilled into.
-func (m *Model) SpaceSelected() (spaceID string, ok bool) {
-	return "", false
-}
-
 // Dismissed returns true if the user pressed back from the top level.
 func (m *Model) Dismissed() bool {
 	d := m.dismissed

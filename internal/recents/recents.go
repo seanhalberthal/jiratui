@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -40,6 +41,16 @@ func configDir() (string, error) {
 	return filepath.Join(home, ".config", "jiru"), nil
 }
 
+// sanitiseProfile removes path separators and leading dots from a profile name.
+func sanitiseProfile(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == 0 {
+			return '_'
+		}
+		return r
+	}, strings.TrimLeft(name, "."))
+}
+
 // recentsPath returns the path to the recents YAML file.
 func recentsPath() (string, error) {
 	dir, err := configDir()
@@ -49,7 +60,7 @@ func recentsPath() (string, error) {
 	if activeProfile == "" || activeProfile == "default" {
 		return filepath.Join(dir, "recents.yml"), nil
 	}
-	return filepath.Join(dir, "recents-"+activeProfile+".yml"), nil
+	return filepath.Join(dir, "recents-"+sanitiseProfile(activeProfile)+".yml"), nil
 }
 
 // Load reads all recent entries from disk.

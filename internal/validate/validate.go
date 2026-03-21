@@ -95,6 +95,17 @@ func BranchName(name string) error {
 	return nil
 }
 
+// confluenceIDRe matches Confluence numeric IDs.
+var confluenceIDRe = regexp.MustCompile(`^[0-9]+$`)
+
+// ConfluenceID validates a Confluence page or space ID (must be numeric).
+func ConfluenceID(id string) error {
+	if !confluenceIDRe.MatchString(id) {
+		return fmt.Errorf("invalid Confluence ID %q: must be numeric", id)
+	}
+	return nil
+}
+
 // BoardID validates a board ID string (positive integer).
 func BoardID(id string) error {
 	if id == "" {

@@ -191,7 +191,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
-		contentHeight := msg.Height - 4 // Reserve for help bar (may wrap to 2 rows) + status line.
+		contentHeight := a.maxContentHeight()
 		a.issueList = a.issueList.SetSize(msg.Width, contentHeight)
 		a.issue = a.issue.SetSize(msg.Width, contentHeight)
 		a.boardList.SetSize(msg.Width, contentHeight)
@@ -816,7 +816,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.filter.SetFilters(a.savedFilters)
 
 		// Re-apply sizes.
-		contentHeight := a.height - 3
+		contentHeight := a.maxContentHeight()
 		a.boardList.SetSize(a.width, contentHeight)
 		a.issueList = a.issueList.SetSize(a.width, contentHeight)
 		a.issue = a.issue.SetSize(a.width, contentHeight)
@@ -1073,7 +1073,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.pageStack = append(a.pageStack, *page)
 				}
 				a.wikiPage = wikiview.New()
-				a.wikiPage = a.wikiPage.SetSize(a.width, a.height-4)
+				a.wikiPage = a.wikiPage.SetSize(a.width, a.maxContentHeight())
 				a.active = viewConfluence
 				return a, a.fetchConfluencePage(ref.Key)
 			}
@@ -1197,7 +1197,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.wikiList, cmd = a.wikiList.Update(msg)
 		if p := a.wikiList.SelectedPage(); p != nil {
 			a.wikiPage = wikiview.New()
-			a.wikiPage = a.wikiPage.SetSize(a.width, a.height-4)
+			a.wikiPage = a.wikiPage.SetSize(a.width, a.maxContentHeight())
 			return a, a.fetchConfluencePage(p.ID)
 		}
 		if fetchID := a.wikiList.NeedsFetch(); fetchID != "" {
@@ -1408,16 +1408,26 @@ func (a App) View() string {
 	help := footerView(a.active, a.width, a.version, a.err != nil, extra...)
 
 	// Show status message above the footer when set.
+	var footer string
 	if a.statusMsg != "" && a.active != viewLoading {
 		style := lipgloss.NewStyle().Foreground(theme.ColourSuccess)
 		if a.err != nil {
 			style = lipgloss.NewStyle().Foreground(theme.ColourError)
 		}
-		status := style.Render(a.statusMsg)
-		return lipgloss.JoinVertical(lipgloss.Left, content, status, help)
+		footer = lipgloss.JoinVertical(lipgloss.Left, style.Render(a.statusMsg), help)
+	} else {
+		footer = help
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, content, help)
+	// Force content to fill the remaining height so the footer is
+	// always pinned to the bottom of the terminal.
+	footerHeight := lipgloss.Height(footer)
+	contentHeight := a.height - footerHeight
+	if contentHeight > 0 {
+		content = lipgloss.NewStyle().Height(contentHeight).Render(content)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, content, footer)
 }
 
 // inputActive reports whether a text input is focused (search overlay, list filter, or setup wizard).
@@ -1471,6 +1481,13 @@ func (a App) inputActive() bool {
 		return true
 	}
 	return false
+}
+
+// maxContentHeight returns the available height for content views, reserving
+// space for the tallest possible footer (issue view has the most bindings).
+func (a App) maxContentHeight() int {
+	footer := footerView(viewIssue, a.width, a.version, false)
+	return a.height - lipgloss.Height(footer)
 }
 
 // currentConfig returns the current config for pre-filling the setup wizard.

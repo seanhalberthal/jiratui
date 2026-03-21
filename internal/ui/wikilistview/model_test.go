@@ -324,25 +324,6 @@ func TestFiltering_InitiallyFalse(t *testing.T) {
 	}
 }
 
-// --- NeedsSpacePages ---
-
-func TestNeedsSpacePages_AlwaysEmpty(t *testing.T) {
-	m := New()
-	if m.NeedsSpacePages() != "" {
-		t.Error("NeedsSpacePages() should always return empty string")
-	}
-}
-
-// --- SpaceSelected ---
-
-func TestSpaceSelected_AlwaysFalse(t *testing.T) {
-	m := New()
-	_, ok := m.SpaceSelected()
-	if ok {
-		t.Error("SpaceSelected() should always return false")
-	}
-}
-
 // --- Item filter values ---
 
 func TestRecentItem_FilterValue(t *testing.T) {

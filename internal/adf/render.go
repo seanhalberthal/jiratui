@@ -12,28 +12,17 @@ import (
 	"github.com/seanhalberthal/jiru/internal/theme"
 )
 
-// --- Styles matching markup package conventions ---
+// --- Styles (shared styles via theme, package-specific styles local) ---
 
 var (
-	styleBold          = lipgloss.NewStyle().Bold(true)
-	styleItalic        = lipgloss.NewStyle().Italic(true)
-	styleUnderline     = lipgloss.NewStyle().Underline(true)
-	styleStrikethrough = lipgloss.NewStyle().Strikethrough(true)
-	styleCode          = lipgloss.NewStyle().Foreground(theme.ColourWarning)
-	styleLink          = lipgloss.NewStyle().Foreground(theme.ColourPrimary).Underline(true)
-	styleLinkURL       = lipgloss.NewStyle().Foreground(theme.ColourSubtle)
-	styleHeading       = lipgloss.NewStyle().Bold(true).Foreground(theme.ColourPrimary)
-	styleBlockquote    = lipgloss.NewStyle().Foreground(theme.ColourSubtle).Italic(true)
-	styleCodeBlock     = lipgloss.NewStyle().Foreground(theme.ColourWarning)
-	styleHRule         = lipgloss.NewStyle().Foreground(theme.ColourSubtle)
-	styleBullet        = lipgloss.NewStyle().Foreground(theme.ColourPrimary).Bold(true)
-	styleImage         = lipgloss.NewStyle().Foreground(theme.ColourSubtle).Italic(true)
-	styleEmoji         = lipgloss.NewStyle()
-	styleExpand        = lipgloss.NewStyle().Bold(true).Foreground(theme.ColourSubtle)
+	styleEmoji  = lipgloss.NewStyle()
+	styleExpand = lipgloss.NewStyle().Bold(true).Foreground(theme.ColourSubtle)
 )
 
 // Render converts an ADF JSON string to styled terminal text.
 // width is the available terminal width for wrapping. If width <= 0, no wrapping is applied.
+// Returns an empty string on invalid input (intentional graceful degradation for TUI display;
+// CLI commands should use ToMarkdown which returns errors).
 func Render(adfJSON string, width int) string {
 	if adfJSON == "" {
 		return ""
@@ -100,7 +89,7 @@ func renderParagraph(node Node, width, indent int) string {
 		text = prefix + text
 	}
 	if width > 0 {
-		text = wrapStyledText(text, width)
+		text = theme.WrapStyledText(text, width)
 	}
 	return text
 }
@@ -117,13 +106,13 @@ func renderHeading(node Node, _ int) string {
 
 	switch level {
 	case 1:
-		return styleHeading.Render("═ " + text + " ═")
+		return theme.StyleHeading.Render("═ " + text + " ═")
 	case 2:
-		return styleHeading.Render("─ " + text + " ─")
+		return theme.StyleHeading.Render("─ " + text + " ─")
 	case 3:
-		return styleHeading.Render("▸ " + text)
+		return theme.StyleHeading.Render("▸ " + text)
 	default:
-		return styleHeading.Render("  " + text)
+		return theme.StyleHeading.Render("  " + text)
 	}
 }
 
@@ -132,7 +121,7 @@ func renderBulletList(node Node, width, indent int) string {
 	var items []string
 	for _, item := range node.Content {
 		if item.Type == "listItem" {
-			prefix := strings.Repeat("  ", indent) + styleBullet.Render("•") + " "
+			prefix := strings.Repeat("  ", indent) + theme.StyleBullet.Render("•") + " "
 			rendered := renderListItemContent(item, width, indent+1)
 			items = append(items, prefix+rendered)
 		}
@@ -151,7 +140,7 @@ func renderOrderedList(node Node, width, indent int) string {
 					num = int(of) + i
 				}
 			}
-			prefix := strings.Repeat("  ", indent) + styleBullet.Render(fmt.Sprintf("%d.", num)) + " "
+			prefix := strings.Repeat("  ", indent) + theme.StyleBullet.Render(fmt.Sprintf("%d.", num)) + " "
 			rendered := renderListItemContent(item, width, indent+1)
 			items = append(items, prefix+rendered)
 		}
@@ -196,7 +185,7 @@ func renderCodeBlock(node Node) string {
 	// Code block children are text nodes.
 	for _, child := range node.Content {
 		if child.Type == "text" {
-			b.WriteString(styleCodeBlock.Render(child.Text))
+			b.WriteString(theme.StyleCodeBlock.Render(child.Text))
 		}
 	}
 
@@ -209,7 +198,7 @@ func renderBlockquote(node Node, width int) string {
 	for _, child := range node.Content {
 		rendered := renderBlock(child, width-4, 0)
 		for _, line := range strings.Split(rendered, "\n") {
-			lines = append(lines, styleBlockquote.Render("│ "+line))
+			lines = append(lines, theme.StyleBlockquote.Render("│ "+line))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -349,7 +338,7 @@ func renderPanel(node Node, width int) string {
 	}
 
 	var b strings.Builder
-	title := styleBold.Render(strings.ToUpper(panelType[:1]) + panelType[1:])
+	title := theme.StyleBold.Render(strings.ToUpper(panelType[:1]) + panelType[1:])
 	fmt.Fprintf(&b, "[%s] %s\n", icon, title)
 
 	for _, child := range node.Content {
@@ -375,7 +364,7 @@ func renderRule(width int) string {
 	if ruleWidth <= 0 {
 		ruleWidth = 40
 	}
-	return styleHRule.Render(strings.Repeat("─", ruleWidth))
+	return theme.StyleHRule.Render(strings.Repeat("─", ruleWidth))
 }
 
 // renderMedia renders media nodes as placeholder text.
@@ -409,12 +398,12 @@ func renderMedia(node Node) string {
 			}
 
 			if mediaType == "file" {
-				return styleImage.Render(fmt.Sprintf("[file: %s]", name))
+				return theme.StyleImage.Render(fmt.Sprintf("[file: %s]", name))
 			}
-			return styleImage.Render(fmt.Sprintf("[image: %s]", name))
+			return theme.StyleImage.Render(fmt.Sprintf("[image: %s]", name))
 		}
 	}
-	return styleImage.Render("[media]")
+	return theme.StyleImage.Render("[media]")
 }
 
 // renderExpand renders an expand/collapsible section (always expanded in terminal).
@@ -456,7 +445,7 @@ func renderTaskList(node Node, width, indent int) string {
 			}
 			text := renderInlineChildren(item.Content)
 			prefix := strings.Repeat("  ", indent)
-			items = append(items, prefix+styleBullet.Render(checkbox)+" "+text)
+			items = append(items, prefix+theme.StyleBullet.Render(checkbox)+" "+text)
 		}
 	}
 	_ = width // Prevent unused parameter warning; reserved for future wrapping.
@@ -514,7 +503,7 @@ func renderInline(node Node) string {
 			}
 		}
 		if url != "" {
-			return styleLink.Render(url)
+			return theme.StyleLink.Render(url)
 		}
 		return ""
 	case "mediaInline":
@@ -524,7 +513,7 @@ func renderInline(node Node) string {
 				name = fns
 			}
 		}
-		return styleImage.Render(fmt.Sprintf("[file: %s]", name))
+		return theme.StyleImage.Render(fmt.Sprintf("[file: %s]", name))
 	case "status":
 		text := ""
 		if t, ok := node.Attrs["text"]; ok {
@@ -551,15 +540,15 @@ func applyMarks(text string, marks []Mark) string {
 	for _, mark := range marks {
 		switch mark.Type {
 		case "strong":
-			result = styleBold.Render(result)
+			result = theme.StyleBold.Render(result)
 		case "em":
-			result = styleItalic.Render(result)
+			result = theme.StyleItalic.Render(result)
 		case "underline":
-			result = styleUnderline.Render(result)
+			result = theme.StyleUnderline.Render(result)
 		case "strike":
-			result = styleStrikethrough.Render(result)
+			result = theme.StyleStrikethrough.Render(result)
 		case "code":
-			result = styleCode.Render(result)
+			result = theme.StyleCode.Render(result)
 		case "link":
 			url := ""
 			if href, ok := mark.Attrs["href"]; ok {
@@ -568,9 +557,9 @@ func applyMarks(text string, marks []Mark) string {
 				}
 			}
 			if url != "" && url != text {
-				result = styleLink.Render(text) + " " + styleLinkURL.Render("("+url+")")
+				result = theme.StyleLink.Render(text) + " " + theme.StyleLinkURL.Render("("+url+")")
 			} else {
-				result = styleLink.Render(text)
+				result = theme.StyleLink.Render(text)
 			}
 		case "textColor":
 			if colour, ok := mark.Attrs["color"]; ok {
@@ -619,42 +608,6 @@ func renderChildrenInline(node Node) string {
 		}
 	}
 	return strings.Join(parts, " ")
-}
-
-// wrapStyledText wraps text at the given width, respecting ANSI escape sequences.
-func wrapStyledText(text string, width int) string {
-	if width <= 0 {
-		return text
-	}
-
-	var result strings.Builder
-	for _, line := range strings.Split(text, "\n") {
-		if lipgloss.Width(line) <= width {
-			result.WriteString(line)
-			result.WriteString("\n")
-			continue
-		}
-
-		words := strings.Fields(line)
-		current := ""
-		for _, word := range words {
-			if current == "" {
-				current = word
-			} else if lipgloss.Width(current+" "+word) <= width {
-				current += " " + word
-			} else {
-				result.WriteString(current)
-				result.WriteString("\n")
-				current = word
-			}
-		}
-		if current != "" {
-			result.WriteString(current)
-			result.WriteString("\n")
-		}
-	}
-
-	return strings.TrimRight(result.String(), "\n")
 }
 
 var issueKeyRe = regexp.MustCompile(`(?:^|[^A-Z0-9-])([A-Z][A-Z][A-Z0-9]*-[0-9]{2,})(?:[^A-Z0-9-]|$)`)

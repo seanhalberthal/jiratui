@@ -15,6 +15,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Page back-navigation stack for browsing page hierarchies
 - Recently viewed pages persisted per-profile to `~/.config/jiru/recents.yml`
 - `Tab` keybinding to switch between Jira and Confluence views
+- Input validation for Confluence page/space IDs in CLI commands
+
+### Fixed
+
+- Footer keybindings and pagination dots now pin to the bottom of the terminal instead of floating with empty space below
+- JQL search results list used less vertical space than available, leaving a gap above the footer
+
+### Changed
+
+- Shared text styles (bold, italic, link, heading, etc.) consolidated into `internal/theme` — eliminates duplication between `adf` and `markup` packages
+- Hardened Confluence API calls with URL path escaping and profile name sanitisation for file paths
+- HTTP error responses and file/stdin reads now use size-limited readers to prevent unbounded memory allocation
 
 ## [0.2.3] — 2026-03-20
 
