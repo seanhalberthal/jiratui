@@ -638,8 +638,7 @@ func TestApp_NavigateBack_FromLoading_WithPreviousHome(t *testing.T) {
 	app.active = viewLoading
 	app.previousView = viewHome
 
-	model, cmd := app.navigateBack()
-	a := model.(App)
+	a, cmd := app.navigateBack()
 
 	if a.active != viewHome {
 		t.Errorf("expected viewHome, got %d", a.active)
@@ -655,8 +654,7 @@ func TestApp_NavigateBack_FromLoading_WithPreviousSprint(t *testing.T) {
 	app.active = viewLoading
 	app.previousView = viewSprint
 
-	model, cmd := app.navigateBack()
-	a := model.(App)
+	a, cmd := app.navigateBack()
 
 	if a.active != viewSprint {
 		t.Errorf("expected viewSprint, got %d", a.active)
