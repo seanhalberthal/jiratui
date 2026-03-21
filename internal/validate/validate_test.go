@@ -137,6 +137,32 @@ func TestAuthType(t *testing.T) {
 	}
 }
 
+func TestConfluenceID(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"123", false},
+		{"456789", false},
+		{"0", false},
+		{"1", false},
+		{"", true},
+		{"abc", true},
+		{"123/ancestors", true},
+		{"../../etc", true},
+		{"12 34", true},
+		{"12-34", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			err := ConfluenceID(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ConfluenceID(%q) err=%v, wantErr=%v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestBoardID(t *testing.T) {
 	tests := []struct {
 		input   string

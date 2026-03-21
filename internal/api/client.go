@@ -90,6 +90,12 @@ func V2(path string) string { return "/rest/api/2" + path }
 // V3 returns the REST API v3 base path prefix.
 func V3(path string) string { return "/rest/api/3" + path }
 
+// Wiki returns the Confluence Cloud v2 API base path prefix.
+func Wiki(path string) string { return "/wiki/api/v2" + path }
+
+// WikiV1 returns the Confluence Cloud v1 API base path prefix (needed for CQL search).
+func WikiV1(path string) string { return "/wiki/rest/api" + path }
+
 func (c *Client) do(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	var bodyReader io.Reader
 	if body != nil {
@@ -126,7 +132,7 @@ func DecodeResponse[T any](resp *http.Response) (*T, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -143,7 +149,7 @@ func CheckResponse(resp *http.Response) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 	return nil

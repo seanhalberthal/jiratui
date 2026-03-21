@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Confluence integration — browse spaces, view pages with full ADF rendering, navigate page hierarchies, and track recently viewed pages
+- `wiki` CLI subcommand group for Confluence operations
+- Spaces browser view with global/personal space ordering and recently viewed pages
+- Confluence page detail view with ADF (Atlassian Document Format) to terminal rendering
+- Page back-navigation stack for browsing page hierarchies
+- Recently viewed pages persisted per-profile to `~/.config/jiru/recents.yml`
+- `Tab` keybinding to switch between Jira and Confluence views
+- Input validation for Confluence page/space IDs in CLI commands
+
+### Fixed
+
+- Footer keybindings and pagination dots now pin to the bottom of the terminal instead of floating with empty space below
+- JQL search results list used less vertical space than available, leaving a gap above the footer
+- ADF table cells now word-wrap instead of truncating — long cell content flows across multiple lines with dot separators between rows for readability
+
+### Changed
+
+- Shared text styles (bold, italic, link, heading, etc.) consolidated into `internal/theme` — eliminates duplication between `adf` and `markup` packages
+- Hardened Confluence API calls with URL path escaping and profile name sanitisation for file paths
+- HTTP error responses and file/stdin reads now use size-limited readers to prevent unbounded memory allocation
+
+## [0.2.3] — 2026-03-20
+
 ### Fixed
 
 - Board view transitions now update in-place instead of triggering a full reload — cursor follows the moved card to its new column, allowing rapid multi-step transitions without re-selecting

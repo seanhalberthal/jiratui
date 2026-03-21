@@ -15,13 +15,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/seanhalberthal/jiru/internal/adf"
 	"github.com/seanhalberthal/jiru/internal/client"
 	"github.com/seanhalberthal/jiru/internal/config"
+	"github.com/seanhalberthal/jiru/internal/confluence"
 	"github.com/seanhalberthal/jiru/internal/filters"
 	"github.com/seanhalberthal/jiru/internal/jira"
 	"github.com/seanhalberthal/jiru/internal/jql"
+	"github.com/seanhalberthal/jiru/internal/recents"
 	"github.com/seanhalberthal/jiru/internal/theme"
 	"github.com/seanhalberthal/jiru/internal/ui/assignview"
+	"github.com/seanhalberthal/jiru/internal/ui/boardlistview"
 	"github.com/seanhalberthal/jiru/internal/ui/boardview"
 	"github.com/seanhalberthal/jiru/internal/ui/branchview"
 	"github.com/seanhalberthal/jiru/internal/ui/commentview"
@@ -29,15 +33,16 @@ import (
 	"github.com/seanhalberthal/jiru/internal/ui/deleteview"
 	"github.com/seanhalberthal/jiru/internal/ui/editview"
 	"github.com/seanhalberthal/jiru/internal/ui/filterview"
-	"github.com/seanhalberthal/jiru/internal/ui/homeview"
+	"github.com/seanhalberthal/jiru/internal/ui/issuelistview"
 	"github.com/seanhalberthal/jiru/internal/ui/issuepickview"
 	"github.com/seanhalberthal/jiru/internal/ui/issueview"
 	"github.com/seanhalberthal/jiru/internal/ui/linkview"
 	"github.com/seanhalberthal/jiru/internal/ui/profileview"
 	"github.com/seanhalberthal/jiru/internal/ui/searchview"
 	"github.com/seanhalberthal/jiru/internal/ui/setupview"
-	"github.com/seanhalberthal/jiru/internal/ui/sprintview"
 	"github.com/seanhalberthal/jiru/internal/ui/transitionview"
+	"github.com/seanhalberthal/jiru/internal/ui/wikilistview"
+	"github.com/seanhalberthal/jiru/internal/ui/wikiview"
 )
 
 // view represents which pane is currently active.
@@ -63,6 +68,8 @@ const (
 	viewDelete
 	viewIssuePick
 	viewProfile
+	viewSpaces     // Confluence space/page browser
+	viewConfluence // Confluence page detail
 )
 
 // App is the root bubbletea model.
@@ -74,8 +81,8 @@ type App struct {
 	searchOrigin     view // View that was active before search was opened.
 	filterOrigin     view // View that was active before filters was opened.
 	transitionOrigin view // View that was active before transition was opened.
-	home             homeview.Model
-	sprint           sprintview.Model
+	boardList        boardlistview.Model
+	issueList        issuelistview.Model
 	issue            issueview.Model
 	search           searchview.Model
 	board            boardview.Model
@@ -90,8 +97,14 @@ type App struct {
 	del              deleteview.Model
 	issuePick        issuepickview.Model
 	profile          profileview.Model
+	wikiList         wikilistview.Model
+	wikiPage         wikiview.Model
 	profileOrigin    view
-	profileName      string // Current active profile name.
+	profileName      string             // Current active profile name.
+	spacesLoaded     bool               // Prevents redundant space fetches.
+	cachedSpaces     []confluence.Space // Cached for space key resolution.
+	tabOrigin        view               // View that was active before tab to confluence.
+	issuePickOrigin  view               // View that was active before issue picker.
 	setup            setupview.Model
 	spinner          spinner.Model
 	width            int
@@ -102,6 +115,7 @@ type App struct {
 	directIssue      string
 	needsSetup       bool
 	issueStack       []jira.Issue       // Stack of issues for parent/pick navigation.
+	pageStack        []confluence.Page  // Stack of pages for back-navigation in confluence.
 	currentIssues    []jira.Issue       // Cached for list↔board toggle.
 	searchIssues     []jira.Issue       // Cached search results for list↔board toggle.
 	searchBoardTitle string             // Title for the search board view.
@@ -124,18 +138,22 @@ func NewApp(c client.JiraClient, directIssue string, partial *config.Config, mis
 	fv := filterview.New()
 
 	app := App{
-		client:      c,
-		keys:        DefaultKeyMap(),
-		active:      viewLoading,
-		home:        homeview.New(),
-		sprint:      sprintview.New(),
-		issue:       issueview.New(),
-		search:      searchview.New(),
-		board:       boardview.New(),
-		filter:      fv,
-		spinner:     s,
-		directIssue: directIssue,
-		version:     version,
+		client:          c,
+		keys:            DefaultKeyMap(),
+		active:          viewLoading,
+		boardList:       boardlistview.New(),
+		issueList:       issuelistview.New(),
+		issue:           issueview.New(),
+		search:          searchview.New(),
+		board:           boardview.New(),
+		filter:          fv,
+		wikiList:        wikilistview.New(),
+		wikiPage:        wikiview.New(),
+		spinner:         s,
+		directIssue:     directIssue,
+		version:         version,
+		tabOrigin:       viewHome,
+		issuePickOrigin: viewIssue,
 	}
 
 	// Load saved filters — non-fatal if unavailable.
@@ -173,10 +191,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
-		contentHeight := msg.Height - 4 // Reserve for help bar (may wrap to 2 rows) + status line.
-		a.sprint = a.sprint.SetSize(msg.Width, contentHeight)
+		contentHeight := a.maxContentHeight()
+		a.issueList = a.issueList.SetSize(msg.Width, contentHeight)
 		a.issue = a.issue.SetSize(msg.Width, contentHeight)
-		a.home.SetSize(msg.Width, contentHeight)
+		a.boardList.SetSize(msg.Width, contentHeight)
 		a.search.SetSize(msg.Width, contentHeight)
 		a.board.SetSize(msg.Width, contentHeight)
 		a.branch.SetSize(msg.Width, contentHeight)
@@ -190,6 +208,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.filter.SetSize(msg.Width, contentHeight)
 		a.setup.SetSize(msg.Width, msg.Height)
 		a.create.SetSize(msg.Width, msg.Height)
+		a.wikiList.SetSize(msg.Width, contentHeight)
+		a.wikiPage = a.wikiPage.SetSize(msg.Width, contentHeight)
 		return a, nil
 
 	case tea.KeyMsg:
@@ -242,6 +262,17 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch {
+		case key.Matches(msg, a.keys.HomeTab) && (a.active == viewHome || a.active == viewSprint || a.active == viewBoard):
+			a.tabOrigin = a.active
+			a.active = viewSpaces
+			if !a.spacesLoaded && a.client != nil {
+				a.spacesLoaded = true
+				return a, a.fetchConfluenceSpaces()
+			}
+			return a, nil
+		case key.Matches(msg, a.keys.HomeTab) && a.active == viewSpaces:
+			a.active = a.tabOrigin
+			return a, nil
 		case key.Matches(msg, a.keys.Search) && !a.search.Visible() && a.active != viewLoading:
 			a.search.Show()
 			a.searchOrigin = a.active
@@ -368,12 +399,32 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(refs) > 0 {
 				a.issuePick = issuepickview.New(refs)
 				a.issuePick.SetSize(a.width, a.height-2)
+				a.issuePickOrigin = viewIssue
 				a.active = viewIssuePick
 				return a, nil
 			}
+		case key.Matches(msg, a.keys.Pages) && a.active == viewConfluence:
+			if page := a.wikiPage.CurrentPage(); page != nil {
+				var refs []issueview.IssueRef
+				// Extract Confluence page links.
+				for _, p := range adf.ExtractPageRefs(page.BodyADF) {
+					refs = append(refs, issueview.IssueRef{Key: p.ID, Display: p.Title, Group: "Linked Pages"})
+				}
+				// Also extract Jira issue keys.
+				for _, k := range adf.ExtractIssueKeys(page.BodyADF) {
+					refs = append(refs, issueview.IssueRef{Key: k, Group: "Jira Issues"})
+				}
+				if len(refs) > 0 {
+					a.issuePick = issuepickview.New(refs)
+					a.issuePick.SetTitle("Pages & Issues")
+					a.issuePick.SetSize(a.width, a.height-2)
+					a.issuePickOrigin = viewConfluence
+					a.active = viewIssuePick
+					return a, nil
+				}
+			}
 		case key.Matches(msg, a.keys.Filters) &&
-			(a.active == viewHome || a.active == viewSprint || a.active == viewBoard || a.active == viewSearchBoard) &&
-			!a.search.Visible():
+			(a.active == viewHome || a.active == viewSprint || a.active == viewBoard || a.active == viewSearchBoard):
 			a.filter.Reset()
 			a.filter.SetFilters(a.savedFilters)
 			a.filterOrigin = a.active
@@ -381,8 +432,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.active = viewFilters
 			return a, nil
 		case key.Matches(msg, a.keys.Profile) &&
-			(a.active == viewHome || a.active == viewSprint || a.active == viewBoard) &&
-			!a.search.Visible():
+			(a.active == viewHome || a.active == viewSprint || a.active == viewBoard):
 			profiles, err := config.ListProfileNames()
 			if err != nil {
 				return a, nil
@@ -410,6 +460,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.statusMsg = "Refreshing..."
 			a.active = viewLoading
 			return a, tea.Batch(a.spinner.Tick, a.fetchBoards())
+		case key.Matches(msg, a.keys.Refresh) && a.active == viewConfluence:
+			if page := a.wikiPage.CurrentPage(); page != nil {
+				a.statusMsg = "Refreshing..."
+				return a, a.fetchConfluencePage(page.ID)
+			}
 		case key.Matches(msg, a.keys.Refresh) && a.active == viewIssue:
 			if iss := a.issue.CurrentIssue(); iss != nil {
 				a.statusMsg = "Refreshing..."
@@ -451,9 +506,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.currentIssues = msg.Issues
 		a.boardTitle = msg.Title
-		a.sprint = a.sprint.SetIssues(msg.Issues)
+		a.issueList = a.issueList.SetIssues(msg.Issues)
 		if msg.HasMore {
-			a.sprint = a.sprint.SetLoading(true)
+			a.issueList = a.issueList.SetLoading(true)
 			return a, a.fetchMoreIssues(IssuesPageMsg{
 				Source:     msg.Source,
 				From:       msg.From,
@@ -498,14 +553,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.currentIssues = append(a.currentIssues, iss)
 				}
 			}
-			a.sprint = a.sprint.AppendIssues(msg.Issues)
+			a.issueList = a.issueList.AppendIssues(msg.Issues)
 		}
 		if msg.HasMore {
 			return a, a.fetchMoreIssues(msg)
 		}
 		// All pages loaded — populate the board once with the full dataset.
 		a.board.SetIssues(a.currentIssues, a.boardTitle)
-		a.sprint = a.sprint.SetLoading(false)
+		a.issueList = a.issueList.SetLoading(false)
 		return a, nil
 
 	case IssueSelectedMsg:
@@ -551,7 +606,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case BoardsLoadedMsg:
 		a.err = nil
-		a.home.SetBoards(msg.Boards)
+		a.boardList.SetBoards(msg.Boards)
 		a.active = viewHome
 		a.statusMsg = ""
 		return a, nil
@@ -629,7 +684,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				a.search.UpdateIssueStatus(msg.Key, msg.NewStatus)
-				a.sprint = a.sprint.UpdateIssueStatus(msg.Key, msg.NewStatus)
+				a.issueList = a.issueList.UpdateIssueStatus(msg.Key, msg.NewStatus)
 				// Update search issue cache.
 				for i, iss := range a.searchIssues {
 					if iss.Key == msg.Key {
@@ -735,11 +790,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ProfileSwitchedMsg:
 		a.client = msg.Client
 		a.profileName = msg.Name
-		a.home = homeview.New()
-		a.sprint = sprintview.New()
+		a.boardList = boardlistview.New()
+		a.issueList = issuelistview.New()
 		a.issue = issueview.New()
 		a.search = searchview.New()
 		a.board = boardview.New()
+		a.wikiList = wikilistview.New()
+		a.wikiPage = wikiview.New()
+		a.spacesLoaded = false
 		a.currentIssues = nil
 		a.boardTitle = ""
 		a.jqlMeta = nil
@@ -758,13 +816,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.filter.SetFilters(a.savedFilters)
 
 		// Re-apply sizes.
-		contentHeight := a.height - 3
-		a.home.SetSize(a.width, contentHeight)
-		a.sprint = a.sprint.SetSize(a.width, contentHeight)
+		contentHeight := a.maxContentHeight()
+		a.boardList.SetSize(a.width, contentHeight)
+		a.issueList = a.issueList.SetSize(a.width, contentHeight)
 		a.issue = a.issue.SetSize(a.width, contentHeight)
 		a.search.SetSize(a.width, contentHeight)
 		a.board.SetSize(a.width, contentHeight)
 		a.filter.SetSize(a.width, contentHeight)
+		a.wikiList.SetSize(a.width, contentHeight)
+		a.wikiPage = a.wikiPage.SetSize(a.width, contentHeight)
 
 		a.statusMsg = fmt.Sprintf("Switched to profile: %s", msg.Name)
 		a.active = viewLoading
@@ -809,7 +869,37 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ErrMsg:
 		a.err = sanitiseError(msg.Err)
 		// Clear loading state — pagination errors should not leave the UI stuck.
-		a.sprint = a.sprint.SetLoading(false)
+		a.issueList = a.issueList.SetLoading(false)
+		return a, nil
+
+	case SpacesLoadedMsg:
+		a.wikiList.SetSpaces(msg.Spaces)
+		a.cachedSpaces = msg.Spaces
+		// Load recents.
+		if entries, err := recents.Load(); err == nil && len(entries) > 0 {
+			a.wikiList.SetRecents(recents.Sorted(entries))
+		}
+		return a, nil
+
+	case SpacePagesLoadedMsg:
+		a.wikiList.SetPages(msg.Pages)
+		return a, nil
+
+	case ConfluencePageLoadedMsg:
+		a.wikiPage.SetPage(msg.Page)
+		a.wikiPage.SetAncestors(msg.Ancestors)
+		if msg.SpaceKey != "" {
+			a.wikiPage.SetSpaceKey(msg.SpaceKey)
+		}
+		a.active = viewConfluence
+		// Record in recents.
+		if msg.Page != nil {
+			_ = recents.Add(msg.Page.ID, msg.Page.Title, msg.SpaceKey)
+		}
+		return a, nil
+
+	case RemoteLinksLoadedMsg:
+		// TODO: display linked Confluence pages in the issue view.
 		return a, nil
 
 	case spinner.TickMsg:
@@ -856,8 +946,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, cmd
 	case viewHome:
-		a.home, cmd = a.home.Update(msg)
-		if b := a.home.SelectedBoard(); b != nil {
+		a.boardList, cmd = a.boardList.Update(msg)
+		if b := a.boardList.SelectedBoard(); b != nil {
 			a.boardID = b.ID
 			a.statusMsg = fmt.Sprintf("Loading %s...", b.Name)
 			a.previousView = viewHome
@@ -866,10 +956,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Batch(cmd, a.fetchActiveSprintForBoard(b.ID))
 		}
 	case viewSprint:
-		a.sprint, cmd = a.sprint.Update(msg)
+		a.issueList, cmd = a.issueList.Update(msg)
 
 		// Check if sprint view wants to open an issue.
-		if iss, ok := a.sprint.SelectedIssue(); ok {
+		if iss, ok := a.issueList.SelectedIssue(); ok {
 			a.active = viewIssue
 			a.previousView = viewSprint
 			a.issue = a.issue.SetIssue(iss)
@@ -880,8 +970,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case viewBoard, viewSearchBoard:
 		a.board, cmd = a.board.Update(msg)
 		if iss, ok := a.board.SelectedIssue(); ok {
-			a.active = viewIssue
 			a.previousView = a.active // Preserves viewBoard or viewSearchBoard.
+			a.active = viewIssue
 			a.issue = a.issue.SetIssue(iss)
 			a.issue.SetIssueURL(a.client.IssueURL(iss.Key))
 			return a, tea.Batch(cmd, a.fetchIssueBundle(iss.Key))
@@ -976,17 +1066,31 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case viewIssuePick:
 		a.issuePick, cmd = a.issuePick.Update(msg)
 		if ref := a.issuePick.Selected(); ref != nil {
-			if iss := a.issue.CurrentIssue(); iss != nil {
-				a.issueStack = append(a.issueStack, *iss)
+			// Check if this is a Confluence page ID (all digits) from the page picker.
+			if a.issuePickOrigin == viewConfluence && isPageID(ref.Key) {
+				// Push current page onto stack for back-navigation.
+				if page := a.wikiPage.CurrentPage(); page != nil {
+					a.pageStack = append(a.pageStack, *page)
+				}
+				a.wikiPage = wikiview.New()
+				a.wikiPage = a.wikiPage.SetSize(a.width, a.maxContentHeight())
+				a.active = viewConfluence
+				return a, a.fetchConfluencePage(ref.Key)
+			}
+			if a.issuePickOrigin == viewIssue {
+				if iss := a.issue.CurrentIssue(); iss != nil {
+					a.issueStack = append(a.issueStack, *iss)
+				}
 			}
 			placeholder := jira.Issue{Key: ref.Key, Summary: "Loading..."}
 			a.issue = a.issue.SetIssue(placeholder)
 			a.issue.SetIssueURL(a.client.IssueURL(ref.Key))
+			a.previousView = a.issuePickOrigin
 			a.active = viewIssue
 			return a, a.fetchIssueBundle(ref.Key)
 		}
 		if a.issuePick.Dismissed() {
-			a.active = viewIssue
+			a.active = a.issuePickOrigin
 		}
 	case viewProfile:
 		a.profile, cmd = a.profile.Update(msg)
@@ -1089,6 +1193,29 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, cmd
 		}
 		return a, cmd
+	case viewSpaces:
+		a.wikiList, cmd = a.wikiList.Update(msg)
+		if p := a.wikiList.SelectedPage(); p != nil {
+			a.wikiPage = wikiview.New()
+			a.wikiPage = a.wikiPage.SetSize(a.width, a.maxContentHeight())
+			return a, a.fetchConfluencePage(p.ID)
+		}
+		if fetchID := a.wikiList.NeedsFetch(); fetchID != "" {
+			return a, a.fetchSpacePages(fetchID)
+		}
+		if a.wikiList.Dismissed() {
+			a.confirmQuit = true
+		}
+	case viewConfluence:
+		a.wikiPage, cmd = a.wikiPage.Update(msg)
+		if url, ok := a.wikiPage.OpenURL(); ok {
+			if a.client != nil {
+				openBrowser(a.client.ConfluencePageURL(strings.TrimPrefix(url, "page/")))
+			}
+		}
+		if a.wikiPage.Dismissed() {
+			a.active = viewSpaces
+		}
 	case viewSearch:
 		a.search, cmd = a.search.Update(msg)
 		if prefix := a.search.NeedsUserSearch(); prefix != "" {
@@ -1159,9 +1286,9 @@ func (a App) View() string {
 			loadingContent,
 		)
 	case viewHome:
-		content = a.home.View()
+		content = a.boardList.View()
 	case viewSprint:
-		content = a.sprint.View()
+		content = a.issueList.View()
 	case viewIssue:
 		content = a.issue.View()
 	case viewSearch:
@@ -1190,6 +1317,10 @@ func (a App) View() string {
 		content = a.issuePick.View()
 	case viewProfile:
 		content = a.profile.View()
+	case viewSpaces:
+		content = a.wikiList.View()
+	case viewConfluence:
+		content = a.wikiPage.View()
 	}
 
 	if a.err != nil {
@@ -1277,16 +1408,26 @@ func (a App) View() string {
 	help := footerView(a.active, a.width, a.version, a.err != nil, extra...)
 
 	// Show status message above the footer when set.
+	var footer string
 	if a.statusMsg != "" && a.active != viewLoading {
 		style := lipgloss.NewStyle().Foreground(theme.ColourSuccess)
 		if a.err != nil {
 			style = lipgloss.NewStyle().Foreground(theme.ColourError)
 		}
-		status := style.Render(a.statusMsg)
-		return lipgloss.JoinVertical(lipgloss.Left, content, status, help)
+		footer = lipgloss.JoinVertical(lipgloss.Left, style.Render(a.statusMsg), help)
+	} else {
+		footer = help
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, content, help)
+	// Force content to fill the remaining height so the footer is
+	// always pinned to the bottom of the terminal.
+	footerHeight := lipgloss.Height(footer)
+	contentHeight := a.height - footerHeight
+	if contentHeight > 0 {
+		content = lipgloss.NewStyle().Height(contentHeight).Render(content)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, content, footer)
 }
 
 // inputActive reports whether a text input is focused (search overlay, list filter, or setup wizard).
@@ -1300,10 +1441,10 @@ func (a App) inputActive() bool {
 	if a.active == viewCreate && a.create.InputActive() {
 		return true
 	}
-	if a.active == viewSprint && a.sprint.Filtering() {
+	if a.active == viewSprint && a.issueList.Filtering() {
 		return true
 	}
-	if a.active == viewHome && a.home.Filtering() {
+	if a.active == viewHome && a.boardList.Filtering() {
 		return true
 	}
 	if a.active == viewBranch && a.branch.InputActive() {
@@ -1336,7 +1477,17 @@ func (a App) inputActive() bool {
 	if a.active == viewProfile && a.profile.InputActive() {
 		return true
 	}
+	if a.active == viewSpaces && a.wikiList.Filtering() {
+		return true
+	}
 	return false
+}
+
+// maxContentHeight returns the available height for content views, reserving
+// space for the tallest possible footer (issue view has the most bindings).
+func (a App) maxContentHeight() int {
+	footer := footerView(viewIssue, a.width, a.version, false)
+	return a.height - lipgloss.Height(footer)
 }
 
 // currentConfig returns the current config for pre-filling the setup wizard.
@@ -1381,7 +1532,7 @@ func (a App) navigateBack() (tea.Model, tea.Cmd) {
 		a.active = viewIssue
 		return a, nil
 	case viewIssuePick:
-		a.active = viewIssue
+		a.active = a.issuePickOrigin
 		return a, nil
 	case viewProfile:
 		a.active = a.profileOrigin
@@ -1404,6 +1555,8 @@ func (a App) navigateBack() (tea.Model, tea.Cmd) {
 			a.active = viewSearchBoard
 		case viewBoard:
 			a.active = viewBoard
+		case viewConfluence:
+			a.active = viewConfluence
 		default:
 			a.active = viewSprint
 		}
@@ -1416,8 +1569,8 @@ func (a App) navigateBack() (tea.Model, tea.Cmd) {
 		a.active = viewSearch
 		return a, nil
 	case viewSprint:
-		if a.sprint.Filtered() {
-			a.sprint = a.sprint.ResetFilter()
+		if a.issueList.Filtered() {
+			a.issueList = a.issueList.ResetFilter()
 			return a, nil
 		}
 		if a.client.Config().BoardID == 0 {
@@ -1454,11 +1607,34 @@ func (a App) navigateBack() (tea.Model, tea.Cmd) {
 		// Initial load or no meaningful previous view — quit.
 		return a, tea.Quit
 	case viewHome:
-		if a.home.Filtered() {
-			a.home.ResetFilter()
+		if a.boardList.Filtered() {
+			a.boardList.ResetFilter()
 			return a, nil
 		}
 		a.confirmQuit = true
+		return a, nil
+	case viewSpaces:
+		// Navigate within confluence — esc/q stays in wiki mode.
+		if a.wikiList.Filtered() {
+			a.wikiList.ResetFilter()
+			return a, nil
+		}
+		if a.wikiList.InPagesState() {
+			a.wikiList.GoToSpaces()
+			return a, nil
+		}
+		// At the top level — quit confirmation (matches Jira home behaviour).
+		a.confirmQuit = true
+		return a, nil
+	case viewConfluence:
+		// Pop from page stack if available (page → page navigation).
+		if len(a.pageStack) > 0 {
+			prev := a.pageStack[len(a.pageStack)-1]
+			a.pageStack = a.pageStack[:len(a.pageStack)-1]
+			a.wikiPage.SetPage(&prev)
+			return a, a.fetchConfluencePage(prev.ID)
+		}
+		a.active = viewSpaces
 		return a, nil
 	}
 	return a, nil
@@ -1998,6 +2174,19 @@ func sanitiseError(err error) error {
 	return fmt.Errorf("%s", clean)
 }
 
+// isPageID returns true if s looks like a Confluence page ID (all digits).
+func isPageID(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func isHTTPS(url string) bool {
 	return strings.HasPrefix(url, "https://")
 }
@@ -2047,6 +2236,59 @@ func (a *App) searchBoardDisplayTitle() string {
 		return "Filter: " + name
 	}
 	return a.searchBoardTitle
+}
+
+// --- Confluence commands ---
+
+func (a App) fetchConfluenceSpaces() tea.Cmd {
+	return func() tea.Msg {
+		spaces, err := a.client.ConfluenceSpaces()
+		if err != nil {
+			return ErrMsg{Err: err}
+		}
+		return SpacesLoadedMsg{Spaces: spaces}
+	}
+}
+
+func (a App) fetchSpacePages(spaceID string) tea.Cmd {
+	return func() tea.Msg {
+		pages, err := a.client.ConfluenceSpacePages(spaceID, 50)
+		if err != nil {
+			return ErrMsg{Err: err}
+		}
+		return SpacePagesLoadedMsg{Pages: pages, SpaceID: spaceID}
+	}
+}
+
+func (a App) fetchConfluencePage(pageID string) tea.Cmd {
+	spaces := a.cachedSpaces // Capture for closure.
+	return func() tea.Msg {
+		page, err := a.client.ConfluencePage(pageID)
+		if err != nil {
+			return ErrMsg{Err: err}
+		}
+		ancestors, _ := a.client.ConfluencePageAncestors(pageID)
+		// Resolve space key from cached spaces.
+		spaceKey := resolveSpaceKey(page.SpaceID, spaces)
+		// Resolve author account ID to display name.
+		if page.Author != "" {
+			page.Author = a.client.GetUserDisplayName(page.Author)
+		}
+		return ConfluencePageLoadedMsg{
+			Page:      page,
+			Ancestors: ancestors,
+			SpaceKey:  spaceKey,
+		}
+	}
+}
+
+func resolveSpaceKey(spaceID string, spaces []confluence.Space) string {
+	for _, s := range spaces {
+		if s.ID == spaceID {
+			return s.Key
+		}
+	}
+	return ""
 }
 
 func copyToClipboard(text string) error {

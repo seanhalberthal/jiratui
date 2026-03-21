@@ -5,6 +5,7 @@ import (
 
 	"github.com/seanhalberthal/jiru/internal/client"
 	"github.com/seanhalberthal/jiru/internal/config"
+	"github.com/seanhalberthal/jiru/internal/confluence"
 	"github.com/seanhalberthal/jiru/internal/jira"
 )
 
@@ -27,6 +28,25 @@ type stubClient struct {
 	boardIssErr  error
 	searchIssues []jira.Issue
 	searchErr    error
+
+	addCommentErr error
+
+	transitions    []jira.Transition
+	transitionsErr error
+	transitionErr  error
+
+	editErr   error
+	assignErr error
+
+	confluenceSpaces    []confluence.Space
+	confluenceSpacesErr error
+	confluencePage      *confluence.Page
+	confluencePageErr   error
+	confluencePages     []confluence.Page
+	confluencePagesErr  error
+	confluenceSearch    []confluence.PageSearchResult
+	confluenceSearchErr error
+	updatePageErr       error
 }
 
 func (s *stubClient) Me() (string, error)    { return s.meName, s.meErr }
@@ -66,12 +86,16 @@ func (s *stubClient) SprintIssuesPage(_ int, _, _ int) (*client.PageResult, erro
 	return &client.PageResult{}, nil
 }
 func (s *stubClient) SprintIssueStats(_ int) (int, int, int, int, error) { return 0, 0, 0, 0, nil }
-func (s *stubClient) Transitions(_ string) ([]jira.Transition, error)    { return nil, nil }
-func (s *stubClient) TransitionIssue(_, _ string) error                  { return nil }
-func (s *stubClient) ChildIssues(_ string) ([]jira.ChildIssue, error)    { return nil, nil }
-func (s *stubClient) AssignIssue(_, _ string) error                      { return nil }
+func (s *stubClient) Transitions(key string) ([]jira.Transition, error) {
+	return s.transitions, s.transitionsErr
+}
+func (s *stubClient) TransitionIssue(_, _ string) error { return s.transitionErr }
+func (s *stubClient) ChildIssues(_ string) ([]jira.ChildIssue, error) {
+	return nil, nil
+}
+func (s *stubClient) AssignIssue(_, _ string) error { return s.assignErr }
 func (s *stubClient) EditIssue(_ string, _ *client.EditIssueRequest) error {
-	return nil
+	return s.editErr
 }
 func (s *stubClient) LinkIssue(_, _, _ string) error                   { return nil }
 func (s *stubClient) GetIssueLinkTypes() ([]jira.IssueLinkType, error) { return nil, nil }
@@ -89,7 +113,39 @@ func (s *stubClient) SearchUsers(_, _ string) ([]client.UserInfo, error)        
 func (s *stubClient) CreateMetaFields(_, _ string) ([]jira.CustomFieldDef, error) {
 	return nil, nil
 }
-func (s *stubClient) AddComment(_, _ string) error { return nil }
+func (s *stubClient) AddComment(_, _ string) error { return s.addCommentErr }
+
+// --- Confluence stubs ---
+
+func (s *stubClient) ConfluenceSpaces() ([]confluence.Space, error) {
+	return s.confluenceSpaces, s.confluenceSpacesErr
+}
+func (s *stubClient) ConfluencePage(_ string) (*confluence.Page, error) {
+	if s.confluencePage != nil {
+		return s.confluencePage, s.confluencePageErr
+	}
+	return &confluence.Page{}, s.confluencePageErr
+}
+func (s *stubClient) ConfluencePageAncestors(_ string) ([]confluence.PageAncestor, error) {
+	return nil, nil
+}
+func (s *stubClient) ConfluenceSpacePages(_ string, _ int) ([]confluence.Page, error) {
+	return s.confluencePages, s.confluencePagesErr
+}
+func (s *stubClient) ConfluenceSearchCQL(_ string, _ int) ([]confluence.PageSearchResult, error) {
+	return s.confluenceSearch, s.confluenceSearchErr
+}
+func (s *stubClient) ConfluencePageURL(_ string) string { return "" }
+func (s *stubClient) UpdateConfluencePage(pageID, title, _ string, _ int) (*confluence.Page, error) {
+	if s.updatePageErr != nil {
+		return nil, s.updatePageErr
+	}
+	return &confluence.Page{ID: pageID, Title: title}, nil
+}
+func (s *stubClient) RemoteLinks(_ string) ([]jira.RemoteLink, error) {
+	return nil, nil
+}
+func (s *stubClient) GetUserDisplayName(accountID string) string { return accountID }
 
 // setStubClient injects a stub client and config into the package-level
 // variables used by CLI commands. Returns a cleanup function that restores

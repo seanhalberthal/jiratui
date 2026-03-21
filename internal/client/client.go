@@ -6,6 +6,7 @@ import (
 
 	"github.com/seanhalberthal/jiru/internal/api"
 	"github.com/seanhalberthal/jiru/internal/config"
+	"github.com/seanhalberthal/jiru/internal/confluence"
 	"github.com/seanhalberthal/jiru/internal/jira"
 )
 
@@ -57,6 +58,17 @@ type JiraClient interface {
 	SearchUsers(project, prefix string) ([]UserInfo, error)
 	CreateMetaFields(project, issueTypeID string) ([]jira.CustomFieldDef, error)
 	AddComment(key, body string) error
+
+	// Confluence operations
+	ConfluenceSpaces() ([]confluence.Space, error)
+	ConfluencePage(pageID string) (*confluence.Page, error)
+	ConfluencePageAncestors(pageID string) ([]confluence.PageAncestor, error)
+	ConfluenceSpacePages(spaceID string, limit int) ([]confluence.Page, error)
+	ConfluenceSearchCQL(cql string, limit int) ([]confluence.PageSearchResult, error)
+	ConfluencePageURL(pageID string) string
+	UpdateConfluencePage(pageID, title, bodyADF string, version int) (*confluence.Page, error)
+	RemoteLinks(key string) ([]jira.RemoteLink, error)
+	GetUserDisplayName(accountID string) string
 }
 
 // EditIssueRequest holds the fields for editing an existing issue.

@@ -11,26 +11,14 @@ import (
 	"github.com/seanhalberthal/jiru/internal/theme"
 )
 
-// --- Styles for markup rendering ---
+// --- Styles (shared styles via theme, package-specific styles local) ---
 
 var (
-	styleBold          = lipgloss.NewStyle().Bold(true)
-	styleItalic        = lipgloss.NewStyle().Italic(true)
-	styleUnderline     = lipgloss.NewStyle().Underline(true)
-	styleStrikethrough = lipgloss.NewStyle().Strikethrough(true)
-	styleMonospace     = lipgloss.NewStyle().Foreground(theme.ColourWarning)
-	styleSuperscript   = lipgloss.NewStyle().Foreground(theme.ColourSubtle)
-	styleSubscript     = lipgloss.NewStyle().Foreground(theme.ColourSubtle)
-	styleLink          = lipgloss.NewStyle().Foreground(theme.ColourPrimary).Underline(true)
-	styleLinkURL       = lipgloss.NewStyle().Foreground(theme.ColourSubtle)
-	styleHeading       = lipgloss.NewStyle().Bold(true).Foreground(theme.ColourPrimary)
-	styleBlockquote    = lipgloss.NewStyle().Foreground(theme.ColourSubtle).Italic(true)
-	styleCodeBlock     = lipgloss.NewStyle().Foreground(theme.ColourWarning)
-	stylePanel         = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(theme.ColourSubtle).Padding(0, 1)
-	styleHRule         = lipgloss.NewStyle().Foreground(theme.ColourSubtle)
-	styleCitation      = lipgloss.NewStyle().Italic(true).Foreground(theme.ColourSubtle)
-	styleBullet        = lipgloss.NewStyle().Foreground(theme.ColourPrimary).Bold(true)
-	styleImage         = lipgloss.NewStyle().Foreground(theme.ColourSubtle).Italic(true)
+	styleMonospace   = lipgloss.NewStyle().Foreground(theme.ColourWarning)
+	styleSuperscript = lipgloss.NewStyle().Foreground(theme.ColourSubtle)
+	styleSubscript   = lipgloss.NewStyle().Foreground(theme.ColourSubtle)
+	stylePanel       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(theme.ColourSubtle).Padding(0, 1)
+	styleCitation    = lipgloss.NewStyle().Italic(true).Foreground(theme.ColourSubtle)
 )
 
 // --- Inline patterns ---
@@ -67,35 +55,35 @@ var inlinePatterns = []struct {
 	{
 		re: regexp.MustCompile(`!([^!\s]+?)(?:\|[^!]*)?\s*!`),
 		replace: func(m []string) string {
-			return styleImage.Render(fmt.Sprintf("[image: %s]", m[1]))
+			return theme.StyleImage.Render(fmt.Sprintf("[image: %s]", m[1]))
 		},
 	},
 	// Bold *text* — boundary-aware (start of line or whitespace/punct before, same after).
 	{
 		re: regexp.MustCompile(`(^|[\s.,;:!?()\[\]])\*([^\s*](?:[^*]*[^\s*])?)\*([\s.,;:!?()\[\]]|$)`),
 		replace: func(m []string) string {
-			return m[1] + styleBold.Render(m[2]) + m[3]
+			return m[1] + theme.StyleBold.Render(m[2]) + m[3]
 		},
 	},
 	// Italic _text_ — boundary-aware.
 	{
 		re: regexp.MustCompile(`(^|[\s.,;:!?()\[\]])_([^\s_](?:[^_]*[^\s_])?)_([\s.,;:!?()\[\]]|$)`),
 		replace: func(m []string) string {
-			return m[1] + styleItalic.Render(m[2]) + m[3]
+			return m[1] + theme.StyleItalic.Render(m[2]) + m[3]
 		},
 	},
 	// Strikethrough -text- — boundary-aware.
 	{
 		re: regexp.MustCompile(`(^|[\s.,;:!?()\[\]])-([^\s\-](?:[^-]*[^\s\-])?)-(?:[\s.,;:!?()\[\]]|$)`),
 		replace: func(m []string) string {
-			return m[1] + styleStrikethrough.Render(m[2])
+			return m[1] + theme.StyleStrikethrough.Render(m[2])
 		},
 	},
 	// Underline +text+ — boundary-aware.
 	{
 		re: regexp.MustCompile(`(^|[\s.,;:!?()\[\]])\+([^\s+](?:[^+]*[^\s+])?)\+([\s.,;:!?()\[\]]|$)`),
 		replace: func(m []string) string {
-			return m[1] + styleUnderline.Render(m[2]) + m[3]
+			return m[1] + theme.StyleUnderline.Render(m[2]) + m[3]
 		},
 	},
 	// Superscript ^text^.
@@ -174,21 +162,21 @@ func renderLink(first, second string) string {
 	if second == "" {
 		// [url] or [page] — single-arg link.
 		if strings.HasPrefix(first, "http") || strings.HasPrefix(first, "mailto:") {
-			return styleLink.Render(first)
+			return theme.StyleLink.Render(first)
 		}
 		// [~username] — user mention.
 		if strings.HasPrefix(first, "~") {
-			return styleBold.Render("@" + first[1:])
+			return theme.StyleBold.Render("@" + first[1:])
 		}
 		// [page] — internal page link, just show the text.
-		return styleLink.Render(first)
+		return theme.StyleLink.Render(first)
 	}
 	// [alias|url] — show alias, with URL in subtle.
 	if strings.HasPrefix(second, "http") || strings.HasPrefix(second, "mailto:") {
-		return styleLink.Render(first) + " " + styleLinkURL.Render("("+second+")")
+		return theme.StyleLink.Render(first) + " " + theme.StyleLinkURL.Render("("+second+")")
 	}
 	// [alias|page] — just show the alias.
-	return styleLink.Render(first)
+	return theme.StyleLink.Render(first)
 }
 
 // mapColour converts a wiki markup colour name to a lipgloss colour.
@@ -287,7 +275,7 @@ func renderBlockLine(line string, width int) (string, bool) {
 		if ruleWidth <= 0 {
 			ruleWidth = 40
 		}
-		return styleHRule.Render(strings.Repeat("─", ruleWidth)), true
+		return theme.StyleHRule.Render(strings.Repeat("─", ruleWidth)), true
 	}
 
 	// Headings: h1. through h6.
@@ -304,7 +292,7 @@ func renderBlockLine(line string, width int) (string, bool) {
 	// Blockquote: bq. text
 	if strings.HasPrefix(trimmed, "bq. ") {
 		text := renderInline(trimmed[4:])
-		return styleBlockquote.Render("│ " + text), true
+		return theme.StyleBlockquote.Render("│ " + text), true
 	}
 
 	// Bulleted lists: * item, ** item, - item, -- item.
@@ -316,7 +304,7 @@ func renderBlockLine(line string, width int) (string, bool) {
 		}
 		indent := strings.Repeat("  ", depth)
 		text := renderInline(m[2])
-		return indent + styleBullet.Render(bullet) + " " + text, true
+		return indent + theme.StyleBullet.Render(bullet) + " " + text, true
 	}
 
 	// Numbered lists: # item, ## item.
@@ -324,9 +312,9 @@ func renderBlockLine(line string, width int) (string, bool) {
 		depth := len(m[1]) - 1
 		indent := strings.Repeat("  ", depth)
 		text := renderInline(m[2])
-		marker := styleBullet.Render("•")
+		marker := theme.StyleBullet.Render("•")
 		if depth == 0 {
-			marker = styleBullet.Render("○")
+			marker = theme.StyleBullet.Render("○")
 		}
 		return indent + marker + " " + text, true
 	}
@@ -345,7 +333,7 @@ func renderContentLine(line string, width int) string {
 
 // renderHeading styles a heading based on level (1 = largest).
 func renderHeading(text string, level int) string {
-	style := styleHeading
+	style := theme.StyleHeading
 	switch level {
 	case 1:
 		return style.Render("═ " + text + " ═")
@@ -455,7 +443,7 @@ func parseCodeBlock(lines []string, start int, _ int) (string, int) {
 		b.WriteString("\n")
 	}
 	for _, line := range content {
-		b.WriteString(styleCodeBlock.Render(line))
+		b.WriteString(theme.StyleCodeBlock.Render(line))
 		b.WriteString("\n")
 	}
 
@@ -499,7 +487,7 @@ func parseNoformatBlock(lines []string, start int, _ int) (string, int) {
 		}
 	}
 
-	rendered := styleCodeBlock.Render(src)
+	rendered := theme.StyleCodeBlock.Render(src)
 	consumed := end - start + 1
 	if end >= len(lines) {
 		consumed = end - start
@@ -544,7 +532,7 @@ func parsePanelBlock(lines []string, start int, width int) (string, int) {
 
 	var b strings.Builder
 	if title != "" {
-		b.WriteString(styleBold.Render(title))
+		b.WriteString(theme.StyleBold.Render(title))
 		b.WriteString("\n")
 	}
 	for _, line := range content {
@@ -587,7 +575,7 @@ func parseQuoteBlock(lines []string, start int, width int) (string, int) {
 
 	var rendered []string
 	for _, line := range content {
-		rendered = append(rendered, styleBlockquote.Render("│ "+renderContentLine(line, width)))
+		rendered = append(rendered, theme.StyleBlockquote.Render("│ "+renderContentLine(line, width)))
 	}
 
 	consumed := end - start + 1
@@ -634,7 +622,7 @@ func parseAdmonitionBlock(lines []string, start int, width int, macro string) (s
 		borderColour = theme.ColourSubtle
 	}
 
-	title := styleBold.Render(strings.ToUpper(macro[:1]) + macro[1:])
+	title := theme.StyleBold.Render(strings.ToUpper(macro[:1]) + macro[1:])
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "[%s] %s\n", icon, title)
@@ -726,7 +714,7 @@ func parseMermaidBlock(lines []string, start int) (string, int) {
 		return rendered, consumed
 	}
 	// Fallback: render as plain code.
-	return styleCodeBlock.Render(src), consumed
+	return theme.StyleCodeBlock.Render(src), consumed
 }
 
 // mermaidMarkerRe matches the [xN] spacing markers that mermaid-ascii emits.
@@ -753,6 +741,6 @@ func renderMermaid(src string) (string, error) {
 	var b strings.Builder
 	b.WriteString(theme.StyleSubtle.Render("── mermaid ──"))
 	b.WriteString("\n")
-	b.WriteString(styleCodeBlock.Render(output))
+	b.WriteString(theme.StyleCodeBlock.Render(output))
 	return b.String(), nil
 }

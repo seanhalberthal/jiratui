@@ -119,7 +119,7 @@ func (m *Model) SetSize(width, height int) {
 	m.width = width
 	m.height = height
 	m.input.Width = width - 4
-	m.results.SetSize(width, height-4)
+	m.results.SetSize(width, height)
 	// Re-truncate title if query is set.
 	if m.query != "" {
 		m.updateTitle(len(m.results.Items()))

@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/pgavlin/mermaid-ascii v0.0.0-20260306204908-ae5b0716f2d5
 	github.com/spf13/cobra v1.10.2
+	github.com/yuin/goldmark v1.7.17
 	github.com/zalando/go-keyring v0.2.6
 	gopkg.in/yaml.v3 v3.0.1
 )
