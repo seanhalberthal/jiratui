@@ -113,8 +113,8 @@ func (a App) handleKeyMsg(msg tea.KeyMsg) (App, tea.Cmd, bool) {
 		a.active = viewHelp
 		return a, nil, true
 
-	case key.Matches(msg, a.keys.Home) && a.active != viewHome && a.active != viewLoading && a.active != viewSetup:
-		a.active = viewHome
+	case key.Matches(msg, a.keys.Home) && a.active != viewSprint && a.active != viewLoading && a.active != viewSetup:
+		a.active = viewSprint
 		a.issueStack = nil
 		a.pageStack = nil
 		return a, nil, true

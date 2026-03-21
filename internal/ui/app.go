@@ -99,7 +99,7 @@ type App struct {
 	profileOrigin    view
 	profileName      string             // Current active profile name.
 	spacesLoaded     bool               // Prevents redundant space fetches.
-	cachedSpaces     []confluence.Space  // Cached for space key resolution.
+	cachedSpaces     []confluence.Space // Cached for space key resolution.
 	tabOrigin        view               // View that was active before tab to confluence.
 	issuePickOrigin  view               // View that was active before issue picker.
 	setup            setupview.Model

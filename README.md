@@ -8,10 +8,12 @@
 
 **A terminal UI for Jira and Confluence — browse sprints, view wiki pages, transition issues, and search with JQL without leaving the terminal.**
 
+[![Release](https://img.shields.io/github/v/release/seanhalberthal/jiru?style=flat&label=Release)](https://github.com/seanhalberthal/jiru/releases/latest)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go)](https://go.dev)
-[![CI](https://img.shields.io/github/actions/workflow/status/seanhalberthal/jiru/ci.yml?branch=main&style=flat&label=CI)](https://github.com/seanhalberthal/jiru/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/seanhalberthal/jiru/ci.yml?branch=main&style=flat&logo=githubactions&logoColor=white&label=CI)](https://github.com/seanhalberthal/jiru/actions)
 [![Licence](https://img.shields.io/github/license/seanhalberthal/jiru?style=flat)](LICENCE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux-blue?style=flat)]()
+[![macOS](https://img.shields.io/badge/macOS-supported-000000?style=flat&logo=apple&logoColor=white)]()
+[![Linux](https://img.shields.io/badge/Linux-supported-FCC624?style=flat&logo=linux&logoColor=black)]()
 
 [Quick Start](#quick-start) · [Configuration](#configuration) · [Usage](#usage) · [Keybindings](#keybindings) · [Development](#development)
 

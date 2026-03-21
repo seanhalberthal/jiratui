@@ -2139,8 +2139,8 @@ func TestFooterView_Issue(t *testing.T) {
 	if !strings.Contains(v, "parent") {
 		t.Error("expected 'parent' in issue footer")
 	}
-	if !strings.Contains(v, "go to issue") {
-		t.Error("expected 'go to issue' in issue footer")
+	if !strings.Contains(v, "issue picker") {
+		t.Error("expected 'issue picker' in issue footer")
 	}
 }
 

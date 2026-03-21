@@ -206,7 +206,7 @@ func allSections() []section {
 			Title: "Views",
 			Bindings: []binding{
 				{"b", "Toggle board / list view"},
-				{"H", "Go to home view"},
+				{"H", "Go to issue list"},
 				{"tab", "Toggle Jira / Confluence wiki"},
 				{"P", "Switch profile"},
 				{"S", "Setup wizard"},
