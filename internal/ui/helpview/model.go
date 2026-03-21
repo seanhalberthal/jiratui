@@ -212,6 +212,17 @@ func allSections() []section {
 			},
 		},
 		{
+			Title: "Confluence Wiki",
+			Bindings: []binding{
+				{"tab", "Switch between Jira and Confluence"},
+				{"enter", "Open space / page"},
+				{"p", "View pages in space"},
+				{"/", "Filter spaces or pages"},
+				{"o", "Open page in browser"},
+				{"esc", "Go back"},
+			},
+		},
+		{
 			Title: "Filter Manager",
 			Bindings: []binding{
 				{"n", "New filter"},
