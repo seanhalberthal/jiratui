@@ -78,15 +78,30 @@ func (m Model) headerHeight() int {
 // SetPage sets the page to display and renders it.
 func (m *Model) SetPage(page *confluence.Page) {
 	m.page = page
+	m.recalcViewport()
 	m.renderContent()
 }
 
 // SetAncestors sets the breadcrumb ancestor chain.
 func (m *Model) SetAncestors(ancestors []confluence.PageAncestor) {
 	m.ancestors = ancestors
+	m.recalcViewport()
 	if m.page != nil {
 		m.renderContent()
 	}
+}
+
+// recalcViewport adjusts the viewport height based on the current header.
+func (m *Model) recalcViewport() {
+	if m.height == 0 {
+		return
+	}
+	hh := m.headerHeight()
+	vpH := m.height - hh
+	if vpH < 1 {
+		vpH = 1
+	}
+	m.viewport.Height = vpH
 }
 
 // SetSpaceKey sets the space key for breadcrumb display.
@@ -278,5 +293,15 @@ func (m *Model) renderBreadcrumb() string {
 
 func (m Model) View() string {
 	header := m.renderHeader()
-	return lipgloss.JoinVertical(lipgloss.Left, header, m.viewport.View())
+	out := lipgloss.JoinVertical(lipgloss.Left, header, m.viewport.View())
+
+	// Ensure output never exceeds allocated height.
+	if m.height > 0 {
+		lines := strings.Split(out, "\n")
+		if len(lines) > m.height {
+			lines = lines[:m.height]
+			out = strings.Join(lines, "\n")
+		}
+	}
+	return out
 }
