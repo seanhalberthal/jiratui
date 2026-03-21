@@ -422,8 +422,8 @@ func TestApp_SprintLoadedMsg_FetchesIssues(t *testing.T) {
 	model, cmd := app.Update(SprintLoadedMsg{Sprint: sprint})
 	a := model.(App)
 
-	if a.statusMsg != "Sprint 99" {
-		t.Errorf("expected status 'Sprint 99', got %q", a.statusMsg)
+	if a.loadingMsg != "Loading Sprint 99..." {
+		t.Errorf("expected loading msg 'Loading Sprint 99...', got %q", a.loadingMsg)
 	}
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd (fetchSprintIssues)")
@@ -1298,8 +1298,8 @@ func TestApp_RefreshKey_FromSprint(t *testing.T) {
 	if a.active != viewLoading {
 		t.Errorf("expected viewLoading on refresh, got %d", a.active)
 	}
-	if a.statusMsg != "Refreshing..." {
-		t.Errorf("expected 'Refreshing...', got %q", a.statusMsg)
+	if a.loadingMsg != "Refreshing sprint issues..." {
+		t.Errorf("expected 'Refreshing sprint issues...', got %q", a.loadingMsg)
 	}
 	if cmd == nil {
 		t.Error("expected non-nil cmd on refresh")
@@ -1336,11 +1336,11 @@ func TestApp_View_LoadingWithStatus(t *testing.T) {
 	c := defaultStub()
 	app := newTestApp(c, "")
 	app.active = viewLoading
-	app.statusMsg = "Loading board..."
+	app.loadingMsg = "Loading board..."
 
 	v := app.View()
 	if !strings.Contains(v, "Loading board...") {
-		t.Error("expected custom status in loading view")
+		t.Error("expected custom loading message in loading view")
 	}
 }
 

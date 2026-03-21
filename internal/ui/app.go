@@ -116,6 +116,7 @@ type App struct {
 	height           int
 	statusMsg        string
 	statusMsgTime    time.Time // When the status message was set.
+	loadingMsg       string    // Contextual loading message for the loading view.
 	err              error
 	retryCmd         tea.Cmd // Command to retry on 'r' from the error dialog.
 	boardID          int
@@ -481,7 +482,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, a.keys.Refresh) && (a.active == viewSprint || a.active == viewBoard):
 			a.previousView = a.active
 			a.active = viewLoading
-			a.statusMsg = "Refreshing..."
+			a.loadingMsg = "Refreshing sprint issues..."
 			a.paginationSeq++
 			return a, tea.Batch(a.spinner.Tick, a.fetchActiveSprintForBoard(a.boardID))
 		case key.Matches(msg, a.keys.Refresh) && a.active == viewSearchBoard:
@@ -489,7 +490,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.paginationSeq++
 			return a, a.searchJQL(a.searchBoardTitle)
 		case key.Matches(msg, a.keys.Refresh) && a.active == viewHome:
-			a.statusMsg = "Refreshing..."
+			a.loadingMsg = "Fetching boards..."
 			a.active = viewLoading
 			return a, tea.Batch(a.spinner.Tick, a.fetchBoards())
 		case key.Matches(msg, a.keys.Refresh) && a.active == viewConfluence:
@@ -507,6 +508,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ClientReadyMsg:
 		a.err = nil
 		a.statusMsg = fmt.Sprintf("Authenticated as %s", msg.DisplayName)
+		a.loadingMsg = "Fetching boards..."
 		// Fetch JQL metadata (statuses, types, etc.) eagerly — used by
 		// both search autocomplete and the board view column layout.
 		var metaCmd tea.Cmd
@@ -525,7 +527,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SprintLoadedMsg:
 		a.err = nil
-		a.statusMsg = msg.Sprint.Name
+		a.loadingMsg = fmt.Sprintf("Loading %s...", msg.Sprint.Name)
 		a.paginationSeq++
 		return a, a.fetchSprintIssues(msg.Sprint.ID, msg.Sprint.Name)
 
@@ -859,6 +861,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.wikiPage = a.wikiPage.SetSize(a.width, contentHeight)
 
 		a.statusMsg = fmt.Sprintf("Switched to profile: %s", msg.Name)
+		a.loadingMsg = "Verifying credentials..."
 		a.active = viewLoading
 		return a, tea.Batch(a.spinner.Tick, a.verifyAuth())
 
@@ -974,6 +977,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.client = client.New(cfg)
 			a.needsSetup = false
 			a.previousView = viewSetup
+			a.loadingMsg = "Verifying credentials..."
 			a.active = viewLoading
 			return a, tea.Batch(a.spinner.Tick, a.verifyAuth())
 		}
@@ -982,7 +986,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.boardList, cmd = a.boardList.Update(msg)
 		if b := a.boardList.SelectedBoard(); b != nil {
 			a.boardID = b.ID
-			a.statusMsg = fmt.Sprintf("Loading %s...", b.Name)
+			a.loadingMsg = fmt.Sprintf("Loading %s...", b.Name)
 			a.previousView = viewHome
 			a.active = viewLoading
 			a.paginationSeq++
@@ -1316,7 +1320,7 @@ func (a App) View() string {
 	case viewSetup:
 		content = a.setup.View()
 	case viewLoading:
-		msg := a.statusMsg
+		msg := a.loadingMsg
 		if msg == "" {
 			msg = "Connecting to Jira..."
 		}
