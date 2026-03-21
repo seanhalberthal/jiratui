@@ -31,6 +31,7 @@ type KeyMap struct {
 	Profile    key.Binding
 	Pages      key.Binding
 	HomeTab    key.Binding
+	Home       key.Binding // Go to home view.
 }
 
 // DefaultKeyMap returns the default vim-style keybindings.
@@ -143,6 +144,10 @@ func DefaultKeyMap() KeyMap {
 		HomeTab: key.NewBinding(
 			key.WithKeys("tab"),
 			key.WithHelp("tab", "toggle"),
+		),
+		Home: key.NewBinding(
+			key.WithKeys("H"),
+			key.WithHelp("H", "home"),
 		),
 	}
 }

@@ -306,6 +306,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.helpOrigin = a.active
 			a.active = viewHelp
 			return a, nil
+		case key.Matches(msg, a.keys.Home) && a.active != viewHome && a.active != viewLoading && a.active != viewSetup:
+			a.active = viewHome
+			a.issueStack = nil
+			a.pageStack = nil
+			return a, nil
 		case key.Matches(msg, a.keys.Search) && !a.search.Visible() && a.active != viewLoading:
 			a.search.Show()
 			a.searchOrigin = a.active
