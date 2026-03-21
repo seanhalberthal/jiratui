@@ -135,6 +135,8 @@ func (s *stubClient) TransitionIssue(_, _ string) error {
 func (s *stubClient) AddComment(_, _ string) error {
 	return s.commentErr
 }
+func (s *stubClient) WatchIssue(_ string) error   { return nil }
+func (s *stubClient) UnwatchIssue(_ string) error { return nil }
 func (s *stubClient) ChildIssues(_ string) ([]jira.ChildIssue, error) {
 	return nil, nil
 }

@@ -424,6 +424,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.active = viewDelete
 				return a, nil
 			}
+		case key.Matches(msg, a.keys.Watch) && a.active == viewIssue:
+			if iss := a.issue.CurrentIssue(); iss != nil {
+				return a, a.toggleWatch(iss.Key, iss.IsWatching)
+			}
 		case key.Matches(msg, a.keys.Parent) && a.active == viewIssue:
 			if iss := a.issue.CurrentIssue(); iss != nil && a.issue.HasParent() {
 				a.issueStack = append(a.issueStack, *iss)
@@ -878,6 +882,22 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				a.statusMsg = "Comment added"
 				return a, a.fetchIssueDetail(msg.Key)
+			}
+		}
+		return a, nil
+
+	case IssueWatchToggledMsg:
+		if msg.Err != nil {
+			a.err = sanitiseError(msg.Err)
+		} else {
+			if msg.IsWatching {
+				a.statusMsg = fmt.Sprintf("Watching %s", msg.Key)
+			} else {
+				a.statusMsg = fmt.Sprintf("Unwatched %s", msg.Key)
+			}
+			// Update the cached issue.
+			if iss := a.issue.CurrentIssue(); iss != nil && iss.Key == msg.Key {
+				a.issue.SetWatching(msg.IsWatching)
 			}
 		}
 		return a, nil
@@ -1488,11 +1508,14 @@ func (a App) View() string {
 	}
 
 	// Force content to fill the remaining height so the footer is
-	// always pinned to the bottom of the terminal.
+	// always pinned to the bottom of the terminal. MaxHeight prevents
+	// overflow when content is taller than expected (e.g., wiki page
+	// headers with long breadcrumbs), which would cause the previous
+	// frame's footer to bleed through.
 	footerHeight := lipgloss.Height(footer)
 	contentHeight := a.height - footerHeight
 	if contentHeight > 0 {
-		content = lipgloss.NewStyle().Height(contentHeight).Render(content)
+		content = lipgloss.NewStyle().Height(contentHeight).MaxHeight(contentHeight).Render(content)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, content, footer)
@@ -1950,6 +1973,18 @@ func (a App) addComment(key, body string) tea.Cmd {
 			return CommentAddedMsg{Key: key, Err: err}
 		}
 		return CommentAddedMsg{Key: key}
+	}
+}
+
+func (a App) toggleWatch(key string, currentlyWatching bool) tea.Cmd {
+	return func() tea.Msg {
+		var err error
+		if currentlyWatching {
+			err = a.client.UnwatchIssue(key)
+		} else {
+			err = a.client.WatchIssue(key)
+		}
+		return IssueWatchToggledMsg{Key: key, IsWatching: !currentlyWatching, Err: err}
 	}
 }
 

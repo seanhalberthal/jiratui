@@ -53,6 +53,7 @@ func footerView(active view, width int, version string, errShowing bool, extra .
 		parent := footerBinding{"p", "parent"}
 		issuePick := footerBinding{"i", "go to issue"}
 		pages := footerBinding{"p", "pages"}
+		watch := footerBinding{"w", "watch"}
 		branch := footerBinding{"n", "branch"}
 		wiki := footerBinding{"tab", "wiki"}
 		jira := footerBinding{"tab", "jira"}
@@ -79,7 +80,7 @@ func footerView(active view, width int, version string, errShowing bool, extra .
 		case viewSearchBoard:
 			bindings = []footerBinding{nav, scroll, columns, open, back, move, listView, jql, filters, refresh, home, help}
 		case viewIssue:
-			bindings = []footerBinding{nav, scroll, topBottom, back, parent, issuePick, edit, assign, move, link, comment, browser, copyURL, branch, del, refresh, jql, home, help}
+			bindings = []footerBinding{nav, scroll, topBottom, back, parent, issuePick, edit, assign, move, link, comment, watch, browser, copyURL, branch, del, refresh, jql, home, help}
 		case viewIssuePick:
 			bindings = []footerBinding{nav, sel, back}
 		case viewBranch:

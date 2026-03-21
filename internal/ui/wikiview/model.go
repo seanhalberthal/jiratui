@@ -54,11 +54,25 @@ func (m Model) SetSize(width, height int) Model {
 	m.width = width
 	m.height = height
 	m.viewport.Width = width
-	m.viewport.Height = height - 4 // Reserve for fixed header (title + meta + border + padding).
+	m.viewport.Height = height - m.headerHeight()
 	if m.page != nil {
 		m.renderContent()
 	}
 	return m
+}
+
+// headerHeight returns the actual rendered header height, or a default
+// estimate when no page is loaded yet.
+func (m Model) headerHeight() int {
+	if m.page == nil {
+		return 4 // Estimate: title + meta + border + padding.
+	}
+	header := m.renderHeader()
+	h := lipgloss.Height(header)
+	if h < 2 {
+		h = 2
+	}
+	return h
 }
 
 // SetPage sets the page to display and renders it.
