@@ -311,7 +311,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.issueStack = nil
 			a.pageStack = nil
 			return a, nil
-		case key.Matches(msg, a.keys.Search) && !a.search.Visible() && a.active != viewLoading:
+		case key.Matches(msg, a.keys.Search) && !a.search.Visible() && a.active != viewLoading && a.active != viewSpaces && a.active != viewConfluence:
 			a.search.Show()
 			a.searchOrigin = a.active
 			a.previousView = a.active

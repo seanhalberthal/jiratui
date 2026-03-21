@@ -113,9 +113,9 @@ func (s *stubClient) SearchUsers(_, _ string) ([]client.UserInfo, error)        
 func (s *stubClient) CreateMetaFields(_, _ string) ([]jira.CustomFieldDef, error) {
 	return nil, nil
 }
-func (s *stubClient) AddComment(_, _ string) error  { return s.addCommentErr }
-func (s *stubClient) WatchIssue(_ string) error      { return nil }
-func (s *stubClient) UnwatchIssue(_ string) error     { return nil }
+func (s *stubClient) AddComment(_, _ string) error { return s.addCommentErr }
+func (s *stubClient) WatchIssue(_ string) error    { return nil }
+func (s *stubClient) UnwatchIssue(_ string) error  { return nil }
 
 // --- Confluence stubs ---
 
